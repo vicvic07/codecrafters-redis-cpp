@@ -7,7 +7,15 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-
+std::string nextWord (int &ptr, std::string input, const char *sep)
+{
+    std::string ret="";
+    while (ptr<input.size() && strchr (sep, input[ptr]))
+        ++ptr;
+    while (ptr<input.size() && !strchr (sep, input[ptr]))
+        ret+=input[ptr++];
+    return ret;
+}
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -45,7 +53,20 @@ int main(int argc, char** argv)
     std::cout << "Waiting for a client to connect...\n";
     int client_fd=accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
     std::cout << "Client connected\n";
-    write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+    while (true)
+    {
+        char buff[4096]={0};
+        ssize_t nr_bytes=read (client_fd, &buff, sizeof(buff));
+        int ptr=0;
+        std::string word;
+        while (ptr<nr_bytes)
+        {
+            word=nextWord (ptr, std::string(buff), "\n\r ");
+            if (word=="PING")
+                write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+        }
+
+    }
     close(client_fd);
     close(server_fd);
     return 0;
