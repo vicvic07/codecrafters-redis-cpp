@@ -51,23 +51,30 @@ int main(int argc, char** argv)
     struct sockaddr_in client_addr;
     int client_addr_len = sizeof(client_addr);
     std::cout << "Waiting for a client to connect...\n";
-    int client_fd=accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
-    std::cout << "Client connected\n";
     while (true)
     {
-        char buff[4096]={0};
-        ssize_t nr_bytes=read (client_fd, &buff, sizeof(buff));
-        int ptr=0;
-        std::string word;
-        while (ptr<nr_bytes)
+        int client_fd=accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
+        std::cout << "Client connected\n";
+        pid_t pid = fork();
+        if (pid==0)
         {
-            word=nextWord (ptr, std::string(buff), "\n\r ");
-            if (word=="PING")
-                write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+            while (true)
+            {
+                char buff[4096]={0};
+                ssize_t nr_bytes=read (client_fd, &buff, sizeof(buff));
+                int ptr=0;
+                std::string word;
+                while (ptr<nr_bytes)
+                {
+                    word=nextWord (ptr, std::string(buff), "\n\r ");
+                    if (word=="PING")
+                        write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+                }
+            }
+            close(client_fd);
         }
-
+        close(client_fd);
     }
-    close(client_fd);
     close(server_fd);
     return 0;
 }
