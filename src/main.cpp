@@ -3,10 +3,39 @@
 #include <string>
 #include <cstring>
 #include <unistd.h>
+#include <variant>
+#include <vector>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <any>
+#include <functional>
+enum class RESPType
+{
+    SIMPLE_STRING,
+    SIMPLE_ERROR,
+    INTEGER,
+    BULK_STRING,
+    NULL_BULK_STRING,
+    ARRAY,
+    NA
+};
+struct RESPToken
+{
+    RESPType type;
+    std::any value;
+    RESPToken (RESPType type, std::any value)
+    {
+        this -> type = type;
+        this -> value = value;
+    }
+    RESPToken ()
+    {
+        this -> type = RESPType::NA;
+        this -> value = std::any();
+    }
+};
 std::string nextWord (int &ptr, std::string input, const char *sep)
 {
     std::string ret="";
@@ -14,6 +43,103 @@ std::string nextWord (int &ptr, std::string input, const char *sep)
         ++ptr;
     while (ptr<input.size() && !strchr (sep, input[ptr]))
         ret+=input[ptr++];
+    return ret;
+}
+std::vector <RESPToken> tokenize (std::string input)
+{
+    std::vector <RESPToken> tokens;
+    int ptr=0;
+    std::function<std::string()>nextArg;
+    std::function<RESPToken()>processInteger;
+    std::function<RESPToken()>processSimpleString;
+    std::function<RESPToken()>processSimpleError;
+    std::function<RESPToken()>processNullBulkString;
+    std::function<RESPToken()>processBulkString;
+    std::function<RESPToken()>processArray;
+    std::function<RESPToken()>processElement;
+    nextArg = [&] ()
+    {
+        /// always returns a string, gets processed later, if needed
+        std::string ret="";
+        while (ptr<input.size() && !(input[ptr]=='\r' && input[ptr+1]=='\n'))
+            ret+=input[ptr++];
+        ptr+=2;
+        return ret;
+    };
+    processInteger = [&] ()
+    {
+        ++ptr;
+        int value = atoi(nextArg().c_str());
+        return RESPToken{RESPType::INTEGER, atoi(nextArg().c_str())};
+    };
+    processSimpleString = [&] ()
+    {
+        ++ptr;
+        return RESPToken{RESPType::SIMPLE_STRING, nextArg()};
+    };
+    processSimpleError = [&] ()
+    {
+        ++ptr;
+        return RESPToken{RESPType::SIMPLE_ERROR, nextArg()};
+    };
+    processNullBulkString = [&] ()
+    {
+        ptr+=5;
+        return RESPToken{RESPType::NULL_BULK_STRING, ""};
+    };
+    processBulkString = [&] ()
+    {
+        ++ptr;
+        int sz = atoi(nextArg().c_str());
+        std::string bytes;
+        for (int i=1;i<=sz;i++)
+            bytes.append (input, ptr++, 1);
+        ptr+=2;
+        return RESPToken{RESPType::BULK_STRING, bytes};
+    };
+    processArray = [&] ()
+    {
+        ++ptr;
+        std::vector <RESPToken> ret;
+        int sz = atoi(nextArg().c_str());
+        for (int i=1;i<=sz;i++)
+        {
+            ret.push_back (processElement());
+        }
+        return RESPToken{RESPType::ARRAY, ret};
+    };
+    processElement = [&] ()
+    {
+        RESPToken return_token;
+        if (input[ptr]==':')
+            return_token = processInteger();
+        else if (input[ptr]=='+')
+            return_token = processSimpleString();
+        else if (input[ptr]=='-')
+            return_token = processSimpleError();
+        else if (input[ptr]=='$')
+        {
+            if (input.substr (ptr+1, ptr+3)=="-1")
+                return_token = processNullBulkString();
+            else
+                return_token = processBulkString();
+        }
+        else if (input[ptr]=='*')
+            return_token = processArray();
+        return return_token;
+    };
+    while (ptr<input.size())
+    {
+        tokens.push_back (processElement ());
+    }
+    return tokens;
+}
+std::string makeBulkString (std::string input)
+{
+    std::string ret="$"+std::to_string(input.size())+"\r\n";
+    for (const auto &ch : input)
+        ret.push_back (ch);
+    ret+="\r\n";
     return ret;
 }
 int main(int argc, char** argv)
@@ -58,17 +184,42 @@ int main(int argc, char** argv)
         pid_t pid = fork();
         if (pid==0)
         {
+            std::function<void(const RESPToken token)>processCommand;
+            processCommand = [&] (const RESPToken &token)
+            {
+                if (token.type == RESPType::ARRAY)
+                {
+                    for (int i=0;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
+                    {
+                        RESPToken element=std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                        if (element.type == RESPType::BULK_STRING && std::any_cast<std::string>(element.value)=="ECHO")
+                        {
+                            RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            std::string wr=makeBulkString (std::any_cast<std::string>(arg.value));
+                            write (client_fd, wr.c_str(), wr.size());
+                        }
+                        else
+                            processCommand (element);
+                    }
+                }
+                if (token.type==RESPType::BULK_STRING)
+                {
+                    if (std::any_cast<std::string>(token.value)=="PING")
+                    {
+                        ssize_t n=write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+                        std::cout << "\nSent: " << n << "\nWanted: " << strlen("+PONG\r\n") << "\n";;
+                    }
+                }
+            };
             while (true)
             {
                 char buff[4096]={0};
                 ssize_t nr_bytes=read (client_fd, &buff, sizeof(buff));
                 int ptr=0;
-                std::string word;
-                while (ptr<nr_bytes)
+                std::vector <RESPToken> tokens=tokenize (std::string (buff));
+                for (const auto &token : tokens)
                 {
-                    word=nextWord (ptr, std::string(buff), "\n\r ");
-                    if (word=="PING")
-                        write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+                    processCommand (token);
                 }
             }
             close(client_fd);
