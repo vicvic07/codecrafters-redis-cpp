@@ -11,6 +11,7 @@
 #include <netdb.h>
 #include <any>
 #include <functional>
+#include <map>
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -34,6 +35,10 @@ struct RESPToken
     {
         this -> type = RESPType::NA;
         this -> value = std::any();
+    }
+    bool operator <(const RESPToken& a) const
+    {
+        return this -> type<a.type;
     }
 };
 std::string nextWord (int &ptr, std::string input, const char *sep)
@@ -142,6 +147,17 @@ std::string makeBulkString (std::string input)
     ret+="\r\n";
     return ret;
 }
+std::string makeSimpleString (std::string input)
+{
+    return "+"+input+"\r\n";
+}
+std::string allUpper (std::string input)
+{
+    for (auto &ch : input)
+        ch=toupper(ch);
+    return input;
+}
+std::map <RESPToken, RESPToken> variables;
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -191,20 +207,37 @@ int main(int argc, char** argv)
                 {
                     for (int i=0;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
                     {
+                        std::string wr="";
                         RESPToken element=std::any_cast<std::vector<RESPToken>>(token.value)[i];
-                        if (element.type == RESPType::BULK_STRING && std::any_cast<std::string>(element.value)=="ECHO")
+                        if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="ECHO")
                         {
                             RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            std::string wr=makeBulkString (std::any_cast<std::string>(arg.value));
-                            write (client_fd, wr.c_str(), wr.size());
+                            wr=makeBulkString (std::any_cast<std::string>(arg.value));
+                        }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="SET")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                            variables[name]=value;
+                            wr=makeSimpleString ("OK");
+                        }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="GET")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            if (variables.find(name)!=variables.end())
+                                wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
+                            else
+                                wr="$-1\r\n";
                         }
                         else
                             processCommand (element);
+                        if (!wr.empty())
+                            write (client_fd, wr.c_str(), wr.size());
                     }
                 }
                 if (token.type==RESPType::BULK_STRING)
                 {
-                    if (std::any_cast<std::string>(token.value)=="PING")
+                    if (allUpper(std::any_cast<std::string>(token.value))=="PING")
                     {
                         ssize_t n=write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
                         std::cout << "\nSent: " << n << "\nWanted: " << strlen("+PONG\r\n") << "\n";;
