@@ -12,6 +12,7 @@
 #include <any>
 #include <functional>
 #include <map>
+#include <chrono>
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -158,6 +159,7 @@ std::string allUpper (std::string input)
     return input;
 }
 std::map <RESPToken, RESPToken> variables;
+std::map <RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -218,14 +220,40 @@ int main(int argc, char** argv)
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                             RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                            auto time_now = std::chrono::system_clock::now();
                             variables[name]=value;
+                            if (i+3<std::any_cast<std::vector<RESPToken>>(token.value).size())
+                            {
+                                RESPToken potential_arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
+                                if (potential_arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(potential_arg.value))=="PX")
+                                {
+                                    if (std::any_cast<RESPType>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].type)==RESPType::INTEGER)
+                                        std::cout << "logic ig";
+                                    int ptr=0;
+                                    variable_time[name]={time_now, atoi(nextWord (ptr, std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].value), ":\r\n ").c_str())};
+                                }
+                            }
+                            else
+                                variable_time.erase(name);
                             wr=makeSimpleString ("OK");
                         }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="GET")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                             if (variables.find(name)!=variables.end())
-                                wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
+                            {
+                                if (variable_time.find(name)==variable_time.end())
+                                    wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
+                                else
+                                {
+                                    auto time_now = std::chrono::system_clock::now();
+                                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_now-variable_time[name].first);
+                                    if (elapsed.count()>variable_time[name].second)
+                                        wr="$-1\r\n";
+                                    else
+                                        wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
+                                }
+                            }
                             else
                                 wr="$-1\r\n";
                         }
