@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <variant>
 #include <vector>
+#include <set>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -148,6 +149,14 @@ std::string makeBulkString (std::string input)
     ret+="\r\n";
     return ret;
 }
+std::string makeInteger (std::string input)
+{
+    std::string ret=":";
+    for (const auto &ch : input)
+        ret.push_back (ch);
+    ret+="\r\n";
+    return ret;
+}
 std::string makeSimpleString (std::string input)
 {
     return "+"+input+"\r\n";
@@ -160,6 +169,7 @@ std::string allUpper (std::string input)
 }
 std::map <RESPToken, RESPToken> variables;
 std::map <RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
+std::map <RESPToken, std::vector<RESPToken>> lists;
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -216,6 +226,13 @@ int main(int argc, char** argv)
                             RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                             wr=makeBulkString (std::any_cast<std::string>(arg.value));
                         }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="RPUSH")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                            lists[name].push_back(value);
+                            wr=makeInteger (std::to_string(lists[name].size()));
+                        }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="SET")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
@@ -227,8 +244,6 @@ int main(int argc, char** argv)
                                 RESPToken potential_arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
                                 if (potential_arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(potential_arg.value))=="PX")
                                 {
-                                    if (std::any_cast<RESPType>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].type)==RESPType::INTEGER)
-                                        std::cout << "logic ig";
                                     int ptr=0;
                                     variable_time[name]={time_now, atoi(nextWord (ptr, std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].value), ":\r\n ").c_str())};
                                 }
