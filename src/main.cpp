@@ -229,8 +229,13 @@ int main(int argc, char** argv)
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="RPUSH")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
-                            lists[name].push_back(value);
+                            i+=2;
+                            for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
+                            {
+                                RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                                lists[name].push_back(value);
+                            }
+                            i--;
                             wr=makeInteger (std::to_string(lists[name].size()));
                         }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="SET")
