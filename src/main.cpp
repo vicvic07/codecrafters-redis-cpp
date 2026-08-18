@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <chrono>
+#include <deque>
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -190,7 +191,7 @@ std::string allUpper (std::string input)
 }
 std::map <RESPToken, RESPToken> variables;
 std::map <RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
-std::map <RESPToken, std::vector<RESPToken>> lists;
+std::map <RESPToken, std::deque<RESPToken>> lists;
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -259,6 +260,18 @@ int main(int argc, char** argv)
                             i--;
                             wr=makeInteger (std::to_string(lists[name].size()));
                         }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LPUSH")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            i+=2;
+                            for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
+                            {
+                                RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                                lists[name].push_front(value);
+                            }
+                            i--;
+                            wr=makeInteger (std::to_string(lists[name].size()));
+                        }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
@@ -269,7 +282,7 @@ int main(int argc, char** argv)
                             }
                             else
                             {
-                                std::vector<RESPToken>::iterator start, stop;
+                                std::deque<RESPToken>::iterator start, stop;
                                 int dif_begin = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str()), dif_end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
                                 if (dif_begin >= 0)
                                 {
