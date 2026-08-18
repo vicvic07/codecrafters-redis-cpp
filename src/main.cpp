@@ -272,6 +272,11 @@ int main(int argc, char** argv)
                             i--;
                             wr=makeInteger (std::to_string(lists[name].size()));
                         }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LLEN")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            wr=makeInteger (std::to_string(lists[name].size()));
+                        }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
