@@ -277,6 +277,17 @@ int main(int argc, char** argv)
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                             wr=makeInteger (std::to_string(lists[name].size()));
                         }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LPOP")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            if (lists.find (name) == lists.end())
+                                wr="$-1\r\n";
+                            else
+                            {
+                                wr=lists[name].front().RESP_string;
+                                lists[name].pop_front();
+                            }
+                        }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
                         {
                             RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
