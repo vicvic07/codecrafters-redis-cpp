@@ -277,12 +277,35 @@ int main(int argc, char** argv)
                                     while (dif_begin-- && start!=lists[name].end())
                                         ++start;
                                 }
+                                else
+                                {
+                                    start = lists[name].end();
+                                    dif_begin = abs (dif_begin);
+                                    while (dif_begin--)
+                                    {
+                                        if (start==lists[name].begin())
+                                            break;
+                                        --start;
+                                    }
+                                }
                                 if (dif_end >= 0)
                                 {
                                     stop = lists[name].begin();
                                     ++dif_end;
                                     while (dif_end-- && stop!=lists[name].end())
                                         ++stop;
+                                }
+                                else
+                                {
+                                    stop = lists[name].end();
+                                    dif_end = abs (dif_end);
+                                    --dif_end;
+                                    while (dif_end--)
+                                    {
+                                        if (stop==lists[name].begin())
+                                            break;
+                                        --stop;
+                                    }
                                 }
                                 int cnt=0;
                                 for (auto itr = start;itr != stop;++itr)
