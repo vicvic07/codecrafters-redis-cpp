@@ -7,6 +7,7 @@
 #include <vector>
 #include <set>
 #include <sys/types.h>
+#include <cassert>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -28,19 +29,24 @@ struct RESPToken
 {
     RESPType type;
     std::any value;
-    RESPToken (RESPType type, std::any value)
+    std::string RESP_string;
+    RESPToken (RESPType type, std::any value, std::string RESP_string)
     {
         this -> type = type;
         this -> value = value;
+        this -> RESP_string = RESP_string;
     }
     RESPToken ()
     {
         this -> type = RESPType::NA;
         this -> value = std::any();
+        this -> RESP_string = "";
     }
     bool operator <(const RESPToken& a) const
     {
-        return this -> type<a.type;
+        if (a.type!=this -> type)
+            return this -> type<a.type;
+        return this -> RESP_string < a.RESP_string;
     }
 };
 std::string nextWord (int &ptr, std::string input, const char *sep)
@@ -75,45 +81,49 @@ std::vector <RESPToken> tokenize (std::string input)
     };
     processInteger = [&] ()
     {
+        int initial=ptr;
         ++ptr;
         int value = atoi(nextArg().c_str());
-        return RESPToken{RESPType::INTEGER, atoi(nextArg().c_str())};
+        return RESPToken{RESPType::INTEGER, atoi(nextArg().c_str()), input.substr(initial, ptr-initial)};
     };
     processSimpleString = [&] ()
     {
+        int initial=ptr;
         ++ptr;
-        return RESPToken{RESPType::SIMPLE_STRING, nextArg()};
+        return RESPToken{RESPType::SIMPLE_STRING, nextArg(), input.substr(initial, ptr-initial)};
     };
     processSimpleError = [&] ()
     {
+        int initial=ptr;
         ++ptr;
-        return RESPToken{RESPType::SIMPLE_ERROR, nextArg()};
+        return RESPToken{RESPType::SIMPLE_ERROR, nextArg(), input.substr(initial, ptr-initial)};
     };
     processNullBulkString = [&] ()
     {
+        int initial=ptr;
         ptr+=5;
-        return RESPToken{RESPType::NULL_BULK_STRING, ""};
+        return RESPToken{RESPType::NULL_BULK_STRING, "", input.substr(initial, ptr-initial)};
     };
     processBulkString = [&] ()
     {
+        int initial=ptr;
         ++ptr;
         int sz = atoi(nextArg().c_str());
         std::string bytes;
         for (int i=1;i<=sz;i++)
             bytes.append (input, ptr++, 1);
         ptr+=2;
-        return RESPToken{RESPType::BULK_STRING, bytes};
+        return RESPToken{RESPType::BULK_STRING, bytes, input.substr(initial, ptr-initial)};
     };
     processArray = [&] ()
     {
+        int initial=ptr;
         ++ptr;
         std::vector <RESPToken> ret;
         int sz = atoi(nextArg().c_str());
         for (int i=1;i<=sz;i++)
-        {
             ret.push_back (processElement());
-        }
-        return RESPToken{RESPType::ARRAY, ret};
+        return RESPToken{RESPType::ARRAY, ret, input.substr(initial, ptr-initial)};
     };
     processElement = [&] ()
     {
@@ -133,12 +143,19 @@ std::vector <RESPToken> tokenize (std::string input)
         }
         else if (input[ptr]=='*')
             return_token = processArray();
+        else
+        {
+            std::cout << "Error parsing";
+            exit (1);
+        }
+        assert (return_token.type!=RESPType::NA);
         return return_token;
     };
     while (ptr<input.size())
     {
         tokens.push_back (processElement ());
     }
+    assert (ptr==input.size());
     return tokens;
 }
 std::string makeBulkString (std::string input)
@@ -160,6 +177,10 @@ std::string makeInteger (std::string input)
 std::string makeSimpleString (std::string input)
 {
     return "+"+input+"\r\n";
+}
+std::string makeArray (std::string input, int cnt)
+{
+    return "*"+std::to_string(cnt)+"\r\n"+input;
 }
 std::string allUpper (std::string input)
 {
@@ -237,6 +258,40 @@ int main(int argc, char** argv)
                             }
                             i--;
                             wr=makeInteger (std::to_string(lists[name].size()));
+                        }
+                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
+                        {
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            std::cout << std::any_cast<std::string>(name.value) << " " << lists[name].size() << "\n";
+                            if (lists.find(name) == lists.end())
+                            {
+                                wr=makeArray ("", 0);
+                            }
+                            else
+                            {
+                                std::vector<RESPToken>::iterator start, stop;
+                                int dif_begin = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str()), dif_end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
+                                if (dif_begin >= 0)
+                                {
+                                    start = lists[name].begin();
+                                    while (dif_begin-- && start!=lists[name].end())
+                                        ++start;
+                                }
+                                if (dif_end >= 0)
+                                {
+                                    stop = lists[name].begin();
+                                    ++dif_end;
+                                    while (dif_end-- && stop!=lists[name].end())
+                                        ++stop;
+                                }
+                                int cnt=0;
+                                for (auto itr = start;itr != stop;++itr)
+                                {
+                                    ++cnt;
+                                    wr+=itr -> RESP_string;
+                                }
+                                wr=makeArray (wr, cnt);
+                            }
                         }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="SET")
                         {
