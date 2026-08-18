@@ -284,8 +284,16 @@ int main(int argc, char** argv)
                                 wr="$-1\r\n";
                             else
                             {
-                                wr=lists[name].front().RESP_string;
-                                lists[name].pop_front();
+                                int cnt=1;
+                                if (i+2<std::any_cast<std::vector<RESPToken>>(token.value).size())
+                                    cnt=atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
+                                for (int i=1;i<=cnt;i++)
+                                {
+                                    wr+=lists[name].front().RESP_string;
+                                    lists[name].pop_front();
+                                }
+                                if (cnt>1)
+                                    wr=makeArray (wr, cnt);
                             }
                         }
                         else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
