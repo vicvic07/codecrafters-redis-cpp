@@ -212,6 +212,14 @@ void handleClient(int client_fd)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "TYPE")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    if (variables.find(name) == variables.end())
+                        wr = makeSimpleString ("none");
+                    else
+                        wr = makeSimpleString ("string");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BLPOP")
                 {
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
