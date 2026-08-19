@@ -220,14 +220,14 @@ void handleClient(int client_fd)
                         std::lock_guard lock(wait_mutex);
                         pop_wait[name].insert(req_time = std::chrono::system_clock::now());
                     }
-                    double timeout = atof(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 1].value).c_str());
+                    double timeout = atof(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
                     while (1)
                     {
                         auto time_now = std::chrono::system_clock::now();
                         auto elapsed = std::chrono::duration<double>(time_now - req_time).count();
                         if (elapsed>timeout && timeout)
                         {
-                            wr = "$-1\r\n";
+                            wr = "*-1\r\n";
                             break;
                         }
                         if (!lists[name].empty() && *pop_wait[name].rbegin() == req_time)
