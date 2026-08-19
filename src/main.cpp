@@ -214,30 +214,33 @@ void handleClient(int client_fd)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BLPOP")
                 {
-                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     std::chrono::time_point<std::chrono::system_clock> req_time;
                     {
                         std::lock_guard lock(wait_mutex);
-                        pop_wait[name].insert (req_time=std::chrono::system_clock::now());
+                        pop_wait[name].insert(req_time = std::chrono::system_clock::now());
                     }
-                    int timeout = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
-                    if (timeout == 0)
+                    double timeout = atof(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 1].value).c_str());
+                    while (1)
                     {
-                        bool keep_alive=1;
-                        while (keep_alive)
+                        auto time_now = std::chrono::system_clock::now();
+                        auto elapsed = std::chrono::duration<double>(time_now - req_time).count();
+                        if (elapsed>timeout && timeout)
                         {
-                            if (!lists[name].empty() && *pop_wait[name].rbegin()==req_time)
+                            wr = "$-1\r\n";
+                            break;
+                        }
+                        if (!lists[name].empty() && *pop_wait[name].rbegin() == req_time)
+                        {
+                            pop_wait[name].erase(pop_wait[name].find(req_time));
+                            RESPToken element;
                             {
-                                pop_wait[name].erase (pop_wait[name].find(req_time));
-                                RESPToken element;
-                                {
-                                    std::lock_guard lock(db_mutex);
-                                    element=lists[name].front();
-                                    lists[name].pop_front();
-                                }
-                                wr = makeArray (name.RESP_string+element.RESP_string, 2);
-                                keep_alive=0;
+                                std::lock_guard lock(db_mutex);
+                                element = lists[name].front();
+                                lists[name].pop_front();
                             }
+                            wr = makeArray(name.RESP_string + element.RESP_string, 2);
+                            break;
                         }
                     }
                 }
@@ -283,8 +286,7 @@ void handleClient(int client_fd)
                     else
                     {
                         int cnt = 1;
-                        if (i + 2 < std::any_cast<std::vector<RESPToken>>(token.value).size())
-                            cnt = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
+                        if (i + 2 < std::any_cast<std::vector<RESPToken>>(token.value).size()) cnt = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
                         for (int i = 1; i <= cnt; i++)
                         {
                             wr += lists[name].front().RESP_string;
