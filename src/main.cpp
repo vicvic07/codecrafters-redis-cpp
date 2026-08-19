@@ -11,11 +11,14 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <thread>
 #include <any>
 #include <functional>
 #include <map>
 #include <chrono>
 #include <deque>
+#include <mutex>
+
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -26,172 +29,393 @@ enum class RESPType
     ARRAY,
     NA
 };
+
 struct RESPToken
 {
     RESPType type;
     std::any value;
     std::string RESP_string;
-    RESPToken (RESPType type, std::any value, std::string RESP_string)
+
+    RESPToken(RESPType type, std::any value, std::string RESP_string)
     {
-        this -> type = type;
-        this -> value = value;
-        this -> RESP_string = RESP_string;
+        this->type = type;
+        this->value = value;
+        this->RESP_string = RESP_string;
     }
-    RESPToken ()
+
+    RESPToken()
     {
-        this -> type = RESPType::NA;
-        this -> value = std::any();
-        this -> RESP_string = "";
+        this->type = RESPType::NA;
+        this->value = std::any();
+        this->RESP_string = "";
     }
+
     bool operator <(const RESPToken& a) const
     {
-        if (a.type!=this -> type)
-            return this -> type<a.type;
-        return this -> RESP_string < a.RESP_string;
+        if (a.type != this->type) return this->type < a.type;
+        return this->RESP_string < a.RESP_string;
     }
 };
-std::string nextWord (int &ptr, std::string input, const char *sep)
+
+std::string nextWord(int& ptr, std::string input, const char* sep)
 {
-    std::string ret="";
-    while (ptr<input.size() && strchr (sep, input[ptr]))
-        ++ptr;
-    while (ptr<input.size() && !strchr (sep, input[ptr]))
-        ret+=input[ptr++];
+    std::string ret = "";
+    while (ptr < input.size() && strchr(sep, input[ptr])) ++ptr;
+    while (ptr < input.size() && !strchr(sep, input[ptr])) ret += input[ptr++];
     return ret;
 }
-std::vector <RESPToken> tokenize (std::string input)
+
+std::vector<RESPToken> tokenize(std::string input)
 {
-    std::vector <RESPToken> tokens;
-    int ptr=0;
-    std::function<std::string()>nextArg;
-    std::function<RESPToken()>processInteger;
-    std::function<RESPToken()>processSimpleString;
-    std::function<RESPToken()>processSimpleError;
-    std::function<RESPToken()>processNullBulkString;
-    std::function<RESPToken()>processBulkString;
-    std::function<RESPToken()>processArray;
-    std::function<RESPToken()>processElement;
-    nextArg = [&] ()
+    std::vector<RESPToken> tokens;
+    int ptr = 0;
+    std::function<std::string()> nextArg;
+    std::function<RESPToken()> processInteger;
+    std::function<RESPToken()> processSimpleString;
+    std::function<RESPToken()> processSimpleError;
+    std::function<RESPToken()> processNullBulkString;
+    std::function<RESPToken()> processBulkString;
+    std::function<RESPToken()> processArray;
+    std::function<RESPToken()> processElement;
+    nextArg = [&]()
     {
         /// always returns a string, gets processed later, if needed
-        std::string ret="";
-        while (ptr<input.size() && !(input[ptr]=='\r' && input[ptr+1]=='\n'))
-            ret+=input[ptr++];
-        ptr+=2;
+        std::string ret = "";
+        while (ptr < input.size() && !(input[ptr] == '\r' && input[ptr + 1] == '\n')) ret += input[ptr++];
+        ptr += 2;
         return ret;
     };
-    processInteger = [&] ()
+    processInteger = [&]()
     {
-        int initial=ptr;
+        int initial = ptr;
         ++ptr;
         int value = atoi(nextArg().c_str());
-        return RESPToken{RESPType::INTEGER, atoi(nextArg().c_str()), input.substr(initial, ptr-initial)};
+        return RESPToken{RESPType::INTEGER, atoi(nextArg().c_str()), input.substr(initial, ptr - initial)};
     };
-    processSimpleString = [&] ()
+    processSimpleString = [&]()
     {
-        int initial=ptr;
+        int initial = ptr;
         ++ptr;
-        return RESPToken{RESPType::SIMPLE_STRING, nextArg(), input.substr(initial, ptr-initial)};
+        return RESPToken{RESPType::SIMPLE_STRING, nextArg(), input.substr(initial, ptr - initial)};
     };
-    processSimpleError = [&] ()
+    processSimpleError = [&]()
     {
-        int initial=ptr;
+        int initial = ptr;
         ++ptr;
-        return RESPToken{RESPType::SIMPLE_ERROR, nextArg(), input.substr(initial, ptr-initial)};
+        return RESPToken{RESPType::SIMPLE_ERROR, nextArg(), input.substr(initial, ptr - initial)};
     };
-    processNullBulkString = [&] ()
+    processNullBulkString = [&]()
     {
-        int initial=ptr;
-        ptr+=5;
-        return RESPToken{RESPType::NULL_BULK_STRING, "", input.substr(initial, ptr-initial)};
+        int initial = ptr;
+        ptr += 5;
+        return RESPToken{RESPType::NULL_BULK_STRING, "", input.substr(initial, ptr - initial)};
     };
-    processBulkString = [&] ()
+    processBulkString = [&]()
     {
-        int initial=ptr;
+        int initial = ptr;
         ++ptr;
         int sz = atoi(nextArg().c_str());
         std::string bytes;
-        for (int i=1;i<=sz;i++)
-            bytes.append (input, ptr++, 1);
-        ptr+=2;
-        return RESPToken{RESPType::BULK_STRING, bytes, input.substr(initial, ptr-initial)};
+        for (int i = 1; i <= sz; i++) bytes.append(input, ptr++, 1);
+        ptr += 2;
+        return RESPToken{RESPType::BULK_STRING, bytes, input.substr(initial, ptr - initial)};
     };
-    processArray = [&] ()
+    processArray = [&]()
     {
-        int initial=ptr;
+        int initial = ptr;
         ++ptr;
-        std::vector <RESPToken> ret;
+        std::vector<RESPToken> ret;
         int sz = atoi(nextArg().c_str());
-        for (int i=1;i<=sz;i++)
-            ret.push_back (processElement());
-        return RESPToken{RESPType::ARRAY, ret, input.substr(initial, ptr-initial)};
+        for (int i = 1; i <= sz; i++) ret.push_back(processElement());
+        return RESPToken{RESPType::ARRAY, ret, input.substr(initial, ptr - initial)};
     };
-    processElement = [&] ()
+    processElement = [&]()
     {
         RESPToken return_token;
-        if (input[ptr]==':')
-            return_token = processInteger();
-        else if (input[ptr]=='+')
-            return_token = processSimpleString();
-        else if (input[ptr]=='-')
-            return_token = processSimpleError();
-        else if (input[ptr]=='$')
+        if (input[ptr] == ':') return_token = processInteger();
+        else if (input[ptr] == '+') return_token = processSimpleString();
+        else if (input[ptr] == '-') return_token = processSimpleError();
+        else if (input[ptr] == '$')
         {
-            if (input.substr (ptr+1, ptr+3)=="-1")
-                return_token = processNullBulkString();
-            else
-                return_token = processBulkString();
+            if (input.substr(ptr + 1, ptr + 3) == "-1") return_token = processNullBulkString();
+            else return_token = processBulkString();
         }
-        else if (input[ptr]=='*')
-            return_token = processArray();
+        else if (input[ptr] == '*') return_token = processArray();
         else
         {
             std::cout << "Error parsing";
-            exit (1);
+            exit(1);
         }
-        assert (return_token.type!=RESPType::NA);
+        assert(return_token.type!=RESPType::NA);
         return return_token;
     };
-    while (ptr<input.size())
+    while (ptr < input.size())
     {
-        tokens.push_back (processElement ());
+        tokens.push_back(processElement());
     }
-    assert (ptr==input.size());
+    assert(ptr==input.size());
     return tokens;
 }
-std::string makeBulkString (std::string input)
+
+std::string makeBulkString(std::string input)
 {
-    std::string ret="$"+std::to_string(input.size())+"\r\n";
-    for (const auto &ch : input)
-        ret.push_back (ch);
-    ret+="\r\n";
+    std::string ret = "$" + std::to_string(input.size()) + "\r\n";
+    for (const auto& ch : input) ret.push_back(ch);
+    ret += "\r\n";
     return ret;
 }
-std::string makeInteger (std::string input)
+
+std::string makeInteger(std::string input)
 {
-    std::string ret=":";
-    for (const auto &ch : input)
-        ret.push_back (ch);
-    ret+="\r\n";
+    std::string ret = ":";
+    for (const auto& ch : input) ret.push_back(ch);
+    ret += "\r\n";
     return ret;
 }
-std::string makeSimpleString (std::string input)
+
+std::string makeSimpleString(std::string input)
 {
-    return "+"+input+"\r\n";
+    return "+" + input + "\r\n";
 }
-std::string makeArray (std::string input, int cnt)
+
+std::string makeArray(std::string input, int cnt)
 {
-    return "*"+std::to_string(cnt)+"\r\n"+input;
+    return "*" + std::to_string(cnt) + "\r\n" + input;
 }
-std::string allUpper (std::string input)
+
+std::string allUpper(std::string input)
 {
-    for (auto &ch : input)
-        ch=toupper(ch);
+    for (auto& ch : input) ch = toupper(ch);
     return input;
 }
-std::map <RESPToken, RESPToken> variables;
-std::map <RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
-std::map <RESPToken, std::deque<RESPToken>> lists;
+
+std::mutex db_mutex;
+std::mutex wait_mutex;
+std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
+std::map<RESPToken, RESPToken> variables;
+std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
+std::map<RESPToken, std::deque<RESPToken>> lists;
+
+void handleClient(int client_fd)
+{
+    std::function<void(const RESPToken token)> processCommand;
+    processCommand = [&](const RESPToken& token)
+    {
+        if (token.type == RESPType::ARRAY)
+        {
+            for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
+            {
+                std::string wr = "";
+                RESPToken element = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ECHO")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BLPOP")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    std::chrono::time_point<std::chrono::system_clock> req_time;
+                    {
+                        std::lock_guard lock(wait_mutex);
+                        pop_wait[name].insert (req_time=std::chrono::system_clock::now());
+                    }
+                    int timeout = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
+                    if (timeout == 0)
+                    {
+                        bool keep_alive=1;
+                        while (keep_alive)
+                        {
+                            if (!lists[name].empty() && *pop_wait[name].rbegin()==req_time)
+                            {
+                                pop_wait[name].erase (pop_wait[name].find(req_time));
+                                RESPToken element;
+                                {
+                                    std::lock_guard lock(db_mutex);
+                                    element=lists[name].front();
+                                    lists[name].pop_front();
+                                }
+                                wr = makeArray (name.RESP_string+element.RESP_string, 2);
+                                keep_alive=0;
+                            }
+                        }
+                    }
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "RPUSH")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    i += 2;
+                    for (; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
+                    {
+                        RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                        {
+                            std::lock_guard lock(db_mutex);
+                            lists[name].push_back(value);
+                        }
+                    }
+                    i--;
+                    wr = makeInteger(std::to_string(lists[name].size()));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LPUSH")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    i += 2;
+                    for (; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
+                    {
+                        RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                        {
+                            std::lock_guard lock(db_mutex);
+                            lists[name].push_front(value);
+                        }
+                    }
+                    i--;
+                    wr = makeInteger(std::to_string(lists[name].size()));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LLEN")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    wr = makeInteger(std::to_string(lists[name].size()));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LPOP")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (lists.find(name) == lists.end()) wr = "$-1\r\n";
+                    else
+                    {
+                        int cnt = 1;
+                        if (i + 2 < std::any_cast<std::vector<RESPToken>>(token.value).size())
+                            cnt = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
+                        for (int i = 1; i <= cnt; i++)
+                        {
+                            wr += lists[name].front().RESP_string;
+                            {
+                                std::lock_guard lock(db_mutex);
+                                lists[name].pop_front();
+                            }
+                        }
+                        if (cnt > 1) wr = makeArray(wr, cnt);
+                    }
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LRANGE")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    std::cout << std::any_cast<std::string>(name.value) << " " << lists[name].size() << "\n";
+                    if (lists.find(name) == lists.end())
+                    {
+                        wr = makeArray("", 0);
+                    }
+                    else
+                    {
+                        std::deque<RESPToken>::iterator start, stop;
+                        int dif_begin = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str()), dif_end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 3].value).c_str());
+                        if (dif_begin >= 0)
+                        {
+                            start = lists[name].begin();
+                            while (dif_begin-- && start != lists[name].end()) ++start;
+                        }
+                        else
+                        {
+                            start = lists[name].end();
+                            dif_begin = abs(dif_begin);
+                            while (dif_begin--)
+                            {
+                                if (start == lists[name].begin()) break;
+                                --start;
+                            }
+                        }
+                        if (dif_end >= 0)
+                        {
+                            stop = lists[name].begin();
+                            ++dif_end;
+                            while (dif_end-- && stop != lists[name].end()) ++stop;
+                        }
+                        else
+                        {
+                            stop = lists[name].end();
+                            dif_end = abs(dif_end);
+                            --dif_end;
+                            while (dif_end--)
+                            {
+                                if (stop == lists[name].begin()) break;
+                                --stop;
+                            }
+                        }
+                        int cnt = 0;
+                        for (auto itr = start; itr != stop; ++itr)
+                        {
+                            ++cnt;
+                            wr += itr->RESP_string;
+                        }
+                        wr = makeArray(wr, cnt);
+                    }
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SET")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    auto time_now = std::chrono::system_clock::now();
+                    {
+                        std::lock_guard lock(db_mutex);
+                        variables[name] = value;
+                    }
+                    if (i + 3 < std::any_cast<std::vector<RESPToken>>(token.value).size())
+                    {
+                        RESPToken potential_arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
+                        if (potential_arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(potential_arg.value)) == "PX")
+                        {
+                            int ptr = 0;
+                            {
+                                std::lock_guard lock(db_mutex);
+                                variable_time[name] = {time_now, atoi(nextWord(ptr, std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 4].value), ":\r\n ").c_str())};
+                            }
+                        }
+                    }
+                    else variable_time.erase(name);
+                    wr = makeSimpleString("OK");
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GET")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (variables.find(name) != variables.end())
+                    {
+                        if (variable_time.find(name) == variable_time.end()) wr = makeBulkString(std::any_cast<std::string>(variables[name].value));
+                        else
+                        {
+                            auto time_now = std::chrono::system_clock::now();
+                            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_now - variable_time[name].first);
+                            if (elapsed.count() > variable_time[name].second) wr = "$-1\r\n";
+                            else wr = makeBulkString(std::any_cast<std::string>(variables[name].value));
+                        }
+                    }
+                    else wr = "$-1\r\n";
+                }
+                else processCommand(element);
+                if (!wr.empty()) write(client_fd, wr.c_str(), wr.size());
+            }
+        }
+        if (token.type == RESPType::BULK_STRING)
+        {
+            if (allUpper(std::any_cast<std::string>(token.value)) == "PING")
+            {
+                ssize_t n = write(client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
+                std::cout << "\nSent: " << n << "\nWanted: " << strlen("+PONG\r\n") << "\n";;
+            }
+        }
+    };
+    while (true)
+    {
+        char buff[4096] = {0};
+        ssize_t nr_bytes = read(client_fd, &buff, sizeof(buff));
+        int ptr = 0;
+        std::vector<RESPToken> tokens = tokenize(std::string(buff));
+        for (const auto& token : tokens)
+        {
+            processCommand(token);
+        }
+    }
+    close(client_fd);
+}
+
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
@@ -229,198 +453,10 @@ int main(int argc, char** argv)
     std::cout << "Waiting for a client to connect...\n";
     while (true)
     {
-        int client_fd=accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
+        int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
         std::cout << "Client connected\n";
-        pid_t pid = fork();
-        if (pid==0)
-        {
-            std::function<void(const RESPToken token)>processCommand;
-            processCommand = [&] (const RESPToken &token)
-            {
-                if (token.type == RESPType::ARRAY)
-                {
-                    for (int i=0;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
-                    {
-                        std::string wr="";
-                        RESPToken element=std::any_cast<std::vector<RESPToken>>(token.value)[i];
-                        if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="ECHO")
-                        {
-                            RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            wr=makeBulkString (std::any_cast<std::string>(arg.value));
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="RPUSH")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            i+=2;
-                            for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
-                            {
-                                RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
-                                lists[name].push_back(value);
-                            }
-                            i--;
-                            wr=makeInteger (std::to_string(lists[name].size()));
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LPUSH")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            i+=2;
-                            for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
-                            {
-                                RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i];
-                                lists[name].push_front(value);
-                            }
-                            i--;
-                            wr=makeInteger (std::to_string(lists[name].size()));
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LLEN")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            wr=makeInteger (std::to_string(lists[name].size()));
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LPOP")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            if (lists.find (name) == lists.end())
-                                wr="$-1\r\n";
-                            else
-                            {
-                                int cnt=1;
-                                if (i+2<std::any_cast<std::vector<RESPToken>>(token.value).size())
-                                    cnt=atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
-                                for (int i=1;i<=cnt;i++)
-                                {
-                                    wr+=lists[name].front().RESP_string;
-                                    lists[name].pop_front();
-                                }
-                                if (cnt>1)
-                                    wr=makeArray (wr, cnt);
-                            }
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="LRANGE")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            std::cout << std::any_cast<std::string>(name.value) << " " << lists[name].size() << "\n";
-                            if (lists.find(name) == lists.end())
-                            {
-                                wr=makeArray ("", 0);
-                            }
-                            else
-                            {
-                                std::deque<RESPToken>::iterator start, stop;
-                                int dif_begin = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str()), dif_end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
-                                if (dif_begin >= 0)
-                                {
-                                    start = lists[name].begin();
-                                    while (dif_begin-- && start!=lists[name].end())
-                                        ++start;
-                                }
-                                else
-                                {
-                                    start = lists[name].end();
-                                    dif_begin = abs (dif_begin);
-                                    while (dif_begin--)
-                                    {
-                                        if (start==lists[name].begin())
-                                            break;
-                                        --start;
-                                    }
-                                }
-                                if (dif_end >= 0)
-                                {
-                                    stop = lists[name].begin();
-                                    ++dif_end;
-                                    while (dif_end-- && stop!=lists[name].end())
-                                        ++stop;
-                                }
-                                else
-                                {
-                                    stop = lists[name].end();
-                                    dif_end = abs (dif_end);
-                                    --dif_end;
-                                    while (dif_end--)
-                                    {
-                                        if (stop==lists[name].begin())
-                                            break;
-                                        --stop;
-                                    }
-                                }
-                                int cnt=0;
-                                for (auto itr = start;itr != stop;++itr)
-                                {
-                                    ++cnt;
-                                    wr+=itr -> RESP_string;
-                                }
-                                wr=makeArray (wr, cnt);
-                            }
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="SET")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
-                            auto time_now = std::chrono::system_clock::now();
-                            variables[name]=value;
-                            if (i+3<std::any_cast<std::vector<RESPToken>>(token.value).size())
-                            {
-                                RESPToken potential_arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
-                                if (potential_arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(potential_arg.value))=="PX")
-                                {
-                                    int ptr=0;
-                                    variable_time[name]={time_now, atoi(nextWord (ptr, std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].value), ":\r\n ").c_str())};
-                                }
-                            }
-                            else
-                                variable_time.erase(name);
-                            wr=makeSimpleString ("OK");
-                        }
-                        else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value))=="GET")
-                        {
-                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                            if (variables.find(name)!=variables.end())
-                            {
-                                if (variable_time.find(name)==variable_time.end())
-                                    wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
-                                else
-                                {
-                                    auto time_now = std::chrono::system_clock::now();
-                                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_now-variable_time[name].first);
-                                    if (elapsed.count()>variable_time[name].second)
-                                        wr="$-1\r\n";
-                                    else
-                                        wr=makeBulkString (std::any_cast<std::string>(variables[name].value));
-                                }
-                            }
-                            else
-                                wr="$-1\r\n";
-                        }
-                        else
-                            processCommand (element);
-                        if (!wr.empty())
-                            write (client_fd, wr.c_str(), wr.size());
-                    }
-                }
-                if (token.type==RESPType::BULK_STRING)
-                {
-                    if (allUpper(std::any_cast<std::string>(token.value))=="PING")
-                    {
-                        ssize_t n=write (client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
-                        std::cout << "\nSent: " << n << "\nWanted: " << strlen("+PONG\r\n") << "\n";;
-                    }
-                }
-            };
-            while (true)
-            {
-                char buff[4096]={0};
-                ssize_t nr_bytes=read (client_fd, &buff, sizeof(buff));
-                int ptr=0;
-                std::vector <RESPToken> tokens=tokenize (std::string (buff));
-                for (const auto &token : tokens)
-                {
-                    processCommand (token);
-                }
-            }
-            close(client_fd);
-        }
-        close(client_fd);
+        std::thread client(handleClient, client_fd);
+        client.detach();
     }
     close(server_fd);
     return 0;
