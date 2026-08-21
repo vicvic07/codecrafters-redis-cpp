@@ -182,7 +182,10 @@ std::string makeArray(std::string input, int cnt)
 {
     return "*" + std::to_string(cnt) + "\r\n" + input;
 }
-
+std::string makeSimpleError(std::string input)
+{
+    return "-"+input + "\r\n";
+}
 std::string allUpper(std::string input)
 {
     for (auto& ch : input) ch = toupper(ch);
@@ -197,7 +200,31 @@ std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::tuple<RESPToken, RESPToken, RESPToken>>> streams;
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
-
+std::pair <int, int> last_id={-1, -1};
+std::pair<bool, RESPToken> valid (std::pair <int, int> id)
+{
+    std::cout << id.first << " " << id.second << "\n";
+    if (id.first == 0 && id.second == 0)
+        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
+    if (last_id.first == -1)
+    {
+        if ((id.first==0 && id.second>=1) || (id.first>0 && id.second>=0))
+        {
+            last_id=id;
+            return {1, RESPToken{RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString (std::to_string(id.first)+"-"+std::to_string(id.second))}};
+        }
+        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
+    }
+    else
+    {
+        if (id.first>last_id.first || (id.first==last_id.first && id.second>last_id.second))
+        {
+            last_id=id;
+            return {1, RESPToken{RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString (std::to_string(id.first)+"-"+std::to_string(id.second))}};
+        }
+        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD is equal or smaller than the target stream top item", makeSimpleError ("ERR The ID specified in XADD is equal or smaller than the target stream top item")}};
+    }
+}
 void handleClient(int client_fd)
 {
     std::function<void(const RESPToken token)> processCommand;
@@ -217,14 +244,19 @@ void handleClient(int client_fd)
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XADD")
                 {
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                    RESPToken id = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                    RESPToken id_token = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
                     RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
                     RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
+                    std::string id_string = std::any_cast<std::string>(id_token.value);
+                    int ptr=0;
+                    std::pair <int, int> id = {atoi(nextWord(ptr, id_string, "-").c_str()), atoi(nextWord(ptr, id_string, "-\r\n \t").c_str())};
+                    auto res=valid (id);
+                    if (res.first)
                     {
                         std::lock_guard lock(stream_mutex);
-                        streams[name].push_back ({id, key, value});
+                        streams[name].push_back ({res.second, key, value});
                     }
-                    wr = id.RESP_string;
+                    wr = res.second.RESP_string;
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "TYPE")
                 {
