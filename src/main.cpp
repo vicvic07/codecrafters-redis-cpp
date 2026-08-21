@@ -203,26 +203,53 @@ std::map<RESPToken, std::deque<RESPToken>> lists;
 std::pair <int, int> last_id={-1, -1};
 std::pair<bool, RESPToken> valid (std::pair <int, int> id)
 {
-    std::cout << id.first << " " << id.second << "\n";
-    if (id.first == 0 && id.second == 0)
-        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
-    if (last_id.first == -1)
+    std::pair<bool, RESPToken> invalid_error = {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
+    std::pair<bool, RESPToken> lesser_error = {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD is equal or smaller than the target stream top item", makeSimpleError ("ERR The ID specified in XADD is equal or smaller than the target stream top item")}};
+    std::function<std::pair<bool, RESPToken>()> make_ret = [&] ()
     {
-        if ((id.first==0 && id.second>=1) || (id.first>0 && id.second>=0))
+        last_id=id;
+        return std::make_pair(1, RESPToken {RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString(std::to_string(id.first)+"-"+std::to_string(id.second))});
+    };
+    if (id.second==-1)
+    {
+        if (last_id.first == -1)
         {
-            last_id=id;
-            return {1, RESPToken{RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString (std::to_string(id.first)+"-"+std::to_string(id.second))}};
+            if (id.first == 0)
+                id.second=1;
+            else
+                id.second=0;
+            return make_ret();
         }
-        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
+        if (id.first < last_id.first)
+            return lesser_error;
+        if (id.first == last_id.first)
+        {
+            id.second = last_id.second+1;
+            return make_ret();
+        }
+        id.second = 0;
+        return make_ret();
     }
     else
     {
-        if (id.first>last_id.first || (id.first==last_id.first && id.second>last_id.second))
+        if (id.first == 0 && id.second == 0)
+            return invalid_error;
+        if (last_id.first == -1)
         {
-            last_id=id;
-            return {1, RESPToken{RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString (std::to_string(id.first)+"-"+std::to_string(id.second))}};
+            if ((id.first==0 && id.second>=1) || (id.first>0 && id.second>=0))
+            {
+                return make_ret();
+            }
+            return invalid_error;
         }
-        return {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD is equal or smaller than the target stream top item", makeSimpleError ("ERR The ID specified in XADD is equal or smaller than the target stream top item")}};
+        else
+        {
+            if (id.first>last_id.first || (id.first==last_id.first && id.second>last_id.second))
+            {
+                return make_ret();
+            }
+            return lesser_error;
+        }
     }
 }
 void handleClient(int client_fd)
@@ -249,7 +276,9 @@ void handleClient(int client_fd)
                     RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
                     std::string id_string = std::any_cast<std::string>(id_token.value);
                     int ptr=0;
-                    std::pair <int, int> id = {atoi(nextWord(ptr, id_string, "-").c_str()), atoi(nextWord(ptr, id_string, "-\r\n \t").c_str())};
+                    std::string first_part=nextWord(ptr, id_string, "-");
+                    std::string second_part=nextWord(ptr, id_string, "-\r\n \t");
+                    std::pair <int, int> id = {first_part=="*"?-1:atoi(first_part.c_str()), second_part=="*"?-1:atoi(second_part.c_str())};
                     auto res=valid (id);
                     if (res.first)
                     {
