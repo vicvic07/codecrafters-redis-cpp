@@ -191,8 +191,10 @@ std::string allUpper(std::string input)
 
 std::mutex db_mutex;
 std::mutex wait_mutex;
+std::mutex stream_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
 std::map<RESPToken, RESPToken> variables;
+std::map<RESPToken, std::vector<std::tuple<RESPToken, RESPToken, RESPToken>>> streams;
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 
@@ -212,13 +214,27 @@ void handleClient(int client_fd)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XADD")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    RESPToken id = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                    RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
+                    RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
+                    {
+                        std::lock_guard lock(stream_mutex);
+                        streams[name].push_back ({id, key, value});
+                    }
+                    wr = id.RESP_string;
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "TYPE")
                 {
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                    if (variables.find(name) == variables.end())
-                        wr = makeSimpleString ("none");
-                    else
+                    if (variables.find(name) != variables.end())
                         wr = makeSimpleString ("string");
+                    else if (streams.find(name) != streams.end())
+                        wr = makeSimpleString ("stream");
+                    else
+                        wr = makeSimpleString ("none");
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BLPOP")
                 {
