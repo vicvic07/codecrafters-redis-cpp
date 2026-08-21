@@ -201,7 +201,7 @@ std::map<RESPToken, std::vector<std::tuple<RESPToken, RESPToken, RESPToken>>> st
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 std::pair <int, int> last_id={-1, -1};
-std::pair<bool, RESPToken> valid (std::pair <int, int> id)
+std::pair<bool, RESPToken> valid (std::pair <long long int, int> id)
 {
     std::pair<bool, RESPToken> invalid_error = {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD must be greater than 0-0", makeSimpleError("ERR The ID specified in XADD must be greater than 0-0")}};
     std::pair<bool, RESPToken> lesser_error = {0, RESPToken {RESPType::SIMPLE_ERROR, "ERR The ID specified in XADD is equal or smaller than the target stream top item", makeSimpleError ("ERR The ID specified in XADD is equal or smaller than the target stream top item")}};
@@ -210,6 +210,23 @@ std::pair<bool, RESPToken> valid (std::pair <int, int> id)
         last_id=id;
         return std::make_pair(1, RESPToken {RESPType::BULK_STRING, std::to_string(id.first)+"-"+std::to_string(id.second), makeBulkString(std::to_string(id.first)+"-"+std::to_string(id.second))});
     };
+    if (id.first==-1)
+    {
+        auto point = std::chrono::system_clock::now();
+        id.first = std::chrono::duration_cast<std::chrono::milliseconds>(point.time_since_epoch()).count();
+        if (id.first == 0)
+        {
+            id.second = 1;
+            return make_ret();
+        }
+        if (last_id.first == id.first)
+        {
+            id.second = last_id.second+1;
+            return make_ret();
+        }
+        id.second = 0;
+        return make_ret();
+    }
     if (id.second==-1)
     {
         if (last_id.first == -1)
@@ -278,7 +295,7 @@ void handleClient(int client_fd)
                     int ptr=0;
                     std::string first_part=nextWord(ptr, id_string, "-");
                     std::string second_part=nextWord(ptr, id_string, "-\r\n \t");
-                    std::pair <int, int> id = {first_part=="*"?-1:atoi(first_part.c_str()), second_part=="*"?-1:atoi(second_part.c_str())};
+                    std::pair <int, int> id = {first_part=="*"?-1:atoi(first_part.c_str()), (second_part=="*" || second_part.empty())?-1:atoi(second_part.c_str())};
                     auto res=valid (id);
                     if (res.first)
                     {
