@@ -315,23 +315,28 @@ void handleClient(int client_fd)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "STREAMS")
                     {
-                        RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
-                        std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+3]);
-                        id.second++;
-                        int p=lowerBoundId (streams, name, id);
-                        int cnt=0;
-                        std::string stream, full_entry;
-                        for (int i=p;i<streams[name].size();i++)
+                        int cnt_streams = ((int)std::any_cast<std::vector<RESPToken>>(token.value).size()-i-2)/2;
+                        for (int j=0;j<cnt_streams;j++)
                         {
-                            ++cnt;
-                            std::string stream_entry;
-                            for (const auto &entry : streams[name][i].second)
-                                stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
-                            stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
-                            full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
+                            RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2+j];
+                            std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j]);
+                            id.second++;
+                            int p=lowerBoundId (streams, name, id);
+                            int cnt=0;
+                            std::string stream, full_entry;
+                            for (int i=p;i<streams[name].size();i++)
+                            {
+                                ++cnt;
+                                std::string stream_entry;
+                                for (const auto &entry : streams[name][i].second)
+                                    stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
+                                stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
+                                full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
+                            }
+                            stream=makeArray(name.RESP_string+full_entry, 2);
+                            wr+=stream;
                         }
-                        stream=makeArray(name.RESP_string+full_entry, 2);
-                        wr=makeArray(stream, 1);
+                        wr=makeArray (wr, cnt_streams);
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XRANGE")
