@@ -197,7 +197,7 @@ std::mutex wait_mutex;
 std::mutex stream_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
 std::map<RESPToken, RESPToken> variables;
-std::map<RESPToken, std::vector<std::tuple<RESPToken, RESPToken, RESPToken>>> streams;
+std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 std::pair <int, int> last_id={-1, -1};
@@ -285,22 +285,67 @@ void handleClient(int client_fd)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XRANGE")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    auto tokenToId = [&] (RESPToken input)
+                    {
+                        std::pair <long long, long long> ret;
+                        int ptr=0;
+                        ret.first=atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "-").c_str());
+                        ret.second=ptr==std::any_cast<std::string>(input.value).size()?0:atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "\n\r \t-").c_str());
+                        return ret;
+                    };
+                    std::pair <long long, long long> start=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+2]), end=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+3]);
+                    int l=0, r=streams[name].size()-1, p=-1;
+                    while (l<=r)
+                    {
+                        int mid = (l+r) >> 1;
+                        if (start>tokenToId(streams[name][mid].first))
+                            p=mid, l=mid+1;
+                        else
+                            r=mid-1;
+                    }
+                    int cnt=0;
+                    std::cout << p+1 << "\n";
+                    for (int i=p+1;i<streams[name].size();i++)
+                    {
+                        if (tokenToId(streams[name][i].first)>end)
+                            break;
+                        ++cnt;
+                        std::string stream_entry;
+                        for (const auto &entry : streams[name][i].second)
+                            stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
+                        stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
+                        wr+=makeArray (streams[name][i].first.RESP_string+stream_entry, 2);
+                    }
+                    wr=makeArray (wr, cnt);
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XADD")
                 {
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     RESPToken id_token = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
-                    RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i+3];
-                    RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
+                    i+=3;
                     std::string id_string = std::any_cast<std::string>(id_token.value);
                     int ptr=0;
                     std::string first_part=nextWord(ptr, id_string, "-");
                     std::string second_part=nextWord(ptr, id_string, "-\r\n \t");
-                    std::pair <int, int> id = {first_part=="*"?-1:atoi(first_part.c_str()), (second_part=="*" || second_part.empty())?-1:atoi(second_part.c_str())};
+                    std::pair <int, int> id = {first_part=="*"?-1:atoll(first_part.c_str()), (second_part=="*" || second_part.empty())?-1:atoi(second_part.c_str())};
                     auto res=valid (id);
                     if (res.first)
                     {
-                        std::lock_guard lock(stream_mutex);
-                        streams[name].push_back ({res.second, key, value});
+                        streams[name].push_back(std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>());
+                        streams[name][streams[name].size()-1].first=res.second;
+                    }
+                    for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i+=2)
+                    {
+                        RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                        RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                        if (res.first)
+                        {
+                            std::lock_guard lock(stream_mutex);
+                            streams[name][streams[name].size()-1].second.push_back ({key, value});
+                        }
                     }
                     wr = res.second.RESP_string;
                 }
