@@ -274,6 +274,31 @@ void handleClient(int client_fd)
     std::function<void(const RESPToken token)> processCommand;
     processCommand = [&](const RESPToken& token)
     {
+        auto tokenToId = [&] (RESPToken input)
+        {
+            int ptr=0;
+            std::string checker = nextWord(ptr, std::any_cast<std::string>(input.value), " \r\n\t");
+            if (checker=="-" || checker=="+")
+                return std::make_pair(-1ll, -1ll);
+            std::pair <long long, long long> ret;
+            ptr=0;
+            ret.first=atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "-").c_str());
+            ret.second=ptr==std::any_cast<std::string>(input.value).size()?0:atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "\n\r \t-").c_str());
+            return ret;
+        };
+        auto lowerBoundId = [&] (typeof (streams) streams, RESPToken name, std::pair <long long, long long> input)
+        {
+            int l=0, r=streams[name].size()-1, p=-1;
+            while (l<=r)
+            {
+                int mid = (l+r) >> 1;
+                if (input>tokenToId(streams[name][mid].first))
+                    p=mid, l=mid+1;
+                else
+                    r=mid-1;
+            }
+            return p+1;
+        };
         if (token.type == RESPType::ARRAY)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -285,33 +310,37 @@ void handleClient(int client_fd)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XREAD")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "STREAMS")
+                    {
+                        RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
+                        std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+3]);
+                        id.second++;
+                        int p=lowerBoundId (streams, name, id);
+                        int cnt=0;
+                        std::string stream, full_entry;
+                        for (int i=p;i<streams[name].size();i++)
+                        {
+                            ++cnt;
+                            std::string stream_entry;
+                            for (const auto &entry : streams[name][i].second)
+                                stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
+                            stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
+                            full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
+                        }
+                        stream=makeArray(name.RESP_string+full_entry, 2);
+                        wr=makeArray(stream, 1);
+                    }
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XRANGE")
                 {
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                    auto tokenToId = [&] (RESPToken input)
-                    {
-                        int ptr=0;
-                        std::string checker = nextWord(ptr, std::any_cast<std::string>(input.value), " \r\n\t");
-                        if (checker=="-" || checker=="+")
-                            return std::make_pair(-1ll, -1ll);
-                        std::pair <long long, long long> ret;
-                        ptr=0;
-                        ret.first=atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "-").c_str());
-                        ret.second=ptr==std::any_cast<std::string>(input.value).size()?0:atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "\n\r \t-").c_str());
-                        return ret;
-                    };
                     std::pair <long long, long long> start=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+2]), end=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+3]);
-                    int l=0, r=streams[name].size()-1, p=-1;
-                    while (l<=r)
-                    {
-                        int mid = (l+r) >> 1;
-                        if (start>tokenToId(streams[name][mid].first))
-                            p=mid, l=mid+1;
-                        else
-                            r=mid-1;
-                    }
+                    int p=lowerBoundId (streams, name, start);
                     int cnt=0;
-                    for (int i=p+1;i<streams[name].size();i++)
+                    for (int i=p;i<streams[name].size();i++)
                     {
                         if (end!=std::make_pair(-1ll, -1ll) && tokenToId(streams[name][i].first)>end)
                             break;
@@ -380,17 +409,20 @@ void handleClient(int client_fd)
                             wr = "*-1\r\n";
                             break;
                         }
-                        if (!lists[name].empty() && *pop_wait[name].rbegin() == req_time)
                         {
-                            pop_wait[name].erase(pop_wait[name].find(req_time));
-                            RESPToken element;
+                            std::lock_guard lock(wait_mutex);
+                            if (!lists[name].empty() && *pop_wait[name].rbegin() == req_time)
                             {
-                                std::lock_guard lock(db_mutex);
-                                element = lists[name].front();
-                                lists[name].pop_front();
+                                pop_wait[name].erase(pop_wait[name].find(req_time));
+                                RESPToken element;
+                                {
+                                    std::lock_guard lock(db_mutex);
+                                    element = lists[name].front();
+                                    lists[name].pop_front();
+                                }
+                                wr = makeArray(name.RESP_string + element.RESP_string, 2);
+                                break;
                             }
-                            wr = makeArray(name.RESP_string + element.RESP_string, 2);
-                            break;
                         }
                     }
                 }
