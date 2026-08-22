@@ -323,7 +323,7 @@ void handleClient(int client_fd)
                     }
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "STREAMS")
                     {
-                        while (req_time==-1 || std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now()-start).count()<=req_time)
+                        while ((req_time==-1 || std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now()-start).count()<=req_time) || req_time==0)
                         {
                             wr="";
                             int cnt_streams = ((int)std::any_cast<std::vector<RESPToken>>(token.value).size()-i-2)/2;
@@ -333,20 +333,21 @@ void handleClient(int client_fd)
                                 RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2+j];
                                 std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j+2]);
                                 id.second++;
-                                int p=lowerBoundId (streams, name, id);
+                                int p=0;
+                                {
+                                    std::lock_guard lock(stream_mutex);
+                                    p=lowerBoundId (streams, name, id);
+                                }
                                 int cnt=0;
                                 std::string stream, full_entry;
-                                for (int i=p;i<streams[name].size();i++)
                                 {
-                                    ++cnt;
-                                    std::string stream_entry;
-                                    for (const auto &entry : streams[name][i].second)
+                                    std::lock_guard lock(stream_mutex);
+                                    for (int i=p;i<streams[name].size();i++)
                                     {
-                                        std::lock_guard lock(stream_mutex);
-                                         stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
-                                    }
-                                    {
-                                        std::lock_guard lock(stream_mutex);
+                                        ++cnt;
+                                        std::string stream_entry;
+                                        for (const auto &entry : streams[name][i].second)
+                                            stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
                                         stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
                                         full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
                                     }
@@ -398,20 +399,19 @@ void handleClient(int client_fd)
                     std::string second_part=nextWord(ptr, id_string, "-\r\n \t");
                     std::pair <int, int> id = {first_part=="*"?-1:atoll(first_part.c_str()), (second_part=="*" || second_part.empty())?-1:atoi(second_part.c_str())};
                     auto res=valid (id);
-                    if (res.first)
                     {
                         std::lock_guard lock(stream_mutex);
-                        streams[name].push_back(std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>());
-                        streams[name][streams[name].size()-1].first=res.second;
-                    }
-                    for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i+=2)
-                    {
-                        RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i];
-                        RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                         if (res.first)
                         {
-                            std::lock_guard lock(stream_mutex);
-                            streams[name][streams[name].size()-1].second.push_back ({key, value});
+                            streams[name].push_back(std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>());
+                            streams[name][streams[name].size()-1].first=res.second;
+                        }
+                        for (;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i+=2)
+                        {
+                            RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                            RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                            if (res.first)
+                                streams[name][streams[name].size()-1].second.push_back ({key, value});
                         }
                     }
                     wr = res.second.RESP_string;
