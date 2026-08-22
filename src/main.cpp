@@ -325,6 +325,7 @@ void handleClient(int client_fd)
                     {
                         while (req_time==-1 || std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now()-start).count()<=req_time)
                         {
+                            wr="";
                             int cnt_streams = ((int)std::any_cast<std::vector<RESPToken>>(token.value).size()-i-2)/2;
                             bool found=0;
                             for (int j=0;j<cnt_streams;j++)
@@ -332,7 +333,6 @@ void handleClient(int client_fd)
                                 RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2+j];
                                 std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j+2]);
                                 id.second++;
-                                std::cout << streams[name].size() << "\n";
                                 int p=lowerBoundId (streams, name, id);
                                 int cnt=0;
                                 std::string stream, full_entry;
@@ -341,24 +341,31 @@ void handleClient(int client_fd)
                                     ++cnt;
                                     std::string stream_entry;
                                     for (const auto &entry : streams[name][i].second)
-                                        stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
-                                    stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
-                                    full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
+                                    {
+                                        std::lock_guard lock(stream_mutex);
+                                         stream_entry+=entry.first.RESP_string+entry.second.RESP_string;
+                                    }
+                                    {
+                                        std::lock_guard lock(stream_mutex);
+                                        stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
+                                        full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
+                                    }
                                 }
                                 found |=(cnt!=0);
                                 stream=makeArray(name.RESP_string+full_entry, 2);
-                                wr+=stream;
+                                if (cnt)
+                                    wr+=stream;
                             }
                             if (found)
                             {
                                 wr=makeArray (wr, cnt_streams);
                                 break;
                             }
+                            if (req_time==-1)
+                                break;
                         }
                         if (wr.empty())
                             wr="*-1\r\n";
-                        if (req_time==-1)
-                            break;
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XRANGE")
@@ -393,6 +400,7 @@ void handleClient(int client_fd)
                     auto res=valid (id);
                     if (res.first)
                     {
+                        std::lock_guard lock(stream_mutex);
                         streams[name].push_back(std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>());
                         streams[name][streams[name].size()-1].first=res.second;
                     }
