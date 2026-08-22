@@ -290,8 +290,12 @@ void handleClient(int client_fd)
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     auto tokenToId = [&] (RESPToken input)
                     {
-                        std::pair <long long, long long> ret;
                         int ptr=0;
+                        std::string checker = nextWord(ptr, std::any_cast<std::string>(input.value), " \r\n\t");
+                        if (checker=="-" || checker=="+")
+                            return std::make_pair(-1ll, -1ll);
+                        std::pair <long long, long long> ret;
+                        ptr=0;
                         ret.first=atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "-").c_str());
                         ret.second=ptr==std::any_cast<std::string>(input.value).size()?0:atoll(nextWord (ptr, std::any_cast<std::string>(input.value), "\n\r \t-").c_str());
                         return ret;
@@ -307,10 +311,9 @@ void handleClient(int client_fd)
                             r=mid-1;
                     }
                     int cnt=0;
-                    std::cout << p+1 << "\n";
                     for (int i=p+1;i<streams[name].size();i++)
                     {
-                        if (tokenToId(streams[name][i].first)>end)
+                        if (end!=std::make_pair(-1ll, -1ll) && tokenToId(streams[name][i].first)>end)
                             break;
                         ++cnt;
                         std::string stream_entry;
