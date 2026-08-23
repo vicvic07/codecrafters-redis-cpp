@@ -704,6 +704,18 @@ void handleClient(int client_fd)
             else
                 wr=makeSimpleError("ERR EXEC without MULTI");
         }
+        else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "DISCARD")
+        {
+            ok=1;
+            if (queued)
+            {
+                commands.clear();
+                wr=makeSimpleString ("OK");
+                queued=0;
+            }
+            else
+                wr=makeSimpleError ("ERR DISCARD without MULTI");
+        }
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
         return ok;
