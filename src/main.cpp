@@ -333,8 +333,8 @@ void handleClient(int client_fd)
                     }
                     else
                     {
-                        variables[name]={RESPType::BULK_STRING, "1", "$1"};
-                        wr=":1";
+                        variables[name]={RESPType::BULK_STRING, std::to_string(1), "$1"};
+                        wr=":1\r\n";
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XREAD")
