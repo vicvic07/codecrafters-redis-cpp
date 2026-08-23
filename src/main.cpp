@@ -323,25 +323,39 @@ void handleClient(int client_fd)
                     }
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "STREAMS")
                     {
+                        wr="";
+                        std::string first_output="none";
+                        std::vector <std::pair<bool, std::pair<long long, long long>>> only_new;
                         while ((req_time==-1 || std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now()-start).count()<=req_time) || req_time==0)
                         {
                             wr="";
                             int cnt_streams = ((int)std::any_cast<std::vector<RESPToken>>(token.value).size()-i-2)/2;
+                            only_new.resize(cnt_streams);
                             bool found=0;
-                            for (int j=0;j<cnt_streams;j++)
                             {
-                                RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2+j];
-                                std::pair <long long, long long> id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j+2]);
-                                id.second++;
-                                int p=0;
+                                std::lock_guard lock(stream_mutex);
+                                for (int j=0;j<cnt_streams;j++)
                                 {
-                                    std::lock_guard lock(stream_mutex);
-                                    p=lowerBoundId (streams, name, id);
-                                }
-                                int cnt=0;
-                                std::string stream, full_entry;
-                                {
-                                    std::lock_guard lock(stream_mutex);
+                                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+2+j];
+                                    std::pair <long long, long long> id={-1, -1};
+                                    if (std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j+2].value)=="$")
+                                    {
+                                        if (only_new[j].first==0)
+                                        {
+                                            only_new[j].first=1;
+                                            only_new[j].second=tokenToId(streams[name].back().first);
+                                            only_new[j].second.second++;
+                                        }
+                                        id=only_new[j].second;
+                                    }
+                                    else
+                                    {
+                                        id=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+cnt_streams+j+2]);
+                                        id.second++;
+                                    }
+                                    int p=lowerBoundId (streams, name, id);
+                                    int cnt=0;
+                                    std::string stream, full_entry;
                                     for (int i=p;i<streams[name].size();i++)
                                     {
                                         ++cnt;
@@ -351,11 +365,11 @@ void handleClient(int client_fd)
                                         stream_entry=makeArray (stream_entry, streams[name][i].second.size()*2);
                                         full_entry=makeArray (makeArray (streams[name][i].first.RESP_string+stream_entry, 2), 1);
                                     }
+                                    found |=(cnt!=0);
+                                    stream=makeArray(name.RESP_string+full_entry, 2);
+                                    if (cnt)
+                                        wr+=stream;
                                 }
-                                found |=(cnt!=0);
-                                stream=makeArray(name.RESP_string+full_entry, 2);
-                                if (cnt)
-                                    wr+=stream;
                             }
                             if (found)
                             {
