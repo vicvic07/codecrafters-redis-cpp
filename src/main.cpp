@@ -278,6 +278,8 @@ bool containsOnlyDigits (std::string input)
 }
 void handleClient(int client_fd)
 {
+    std::vector <std::vector<RESPToken>> commands;
+    bool queued=0;
     std::function<void(const RESPToken token)> processCommand;
     processCommand = [&](const RESPToken& token)
     {
@@ -662,12 +664,50 @@ void handleClient(int client_fd)
             }
         }
     };
+    auto checkModQueue = [&] (const RESPToken& token)
+    {
+        bool ant_queue=queued;
+        std::string wr="";
+        RESPToken command=std::any_cast<std::vector<RESPToken>>(token.value)[0];
+        if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "MULTI")
+        {
+            wr=makeSimpleString("OK");
+            queued=1;
+        }
+        else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "EXEC")
+        {
+            if (queued)
+            {
+                wr=makeSimpleString("OK");
+                queued=0;
+                for (const auto& tokens : commands)
+                {
+                    for (const auto& token : tokens)
+                        processCommand(token);
+                }
+            }
+            else
+                wr=makeSimpleError("ERR EXEC without MULTI");
+        }
+        if (!wr.empty())
+            write (client_fd, wr.c_str(), wr.size());
+        return ant_queue!=queued;
+    };
     while (true)
     {
         char buff[4096] = {0};
         ssize_t nr_bytes = read(client_fd, &buff, sizeof(buff));
         int ptr = 0;
         std::vector<RESPToken> tokens = tokenize(std::string(buff));
+        if (tokens.empty())
+            continue;
+        if (checkModQueue (tokens[0]))
+            continue;
+        if (queued)
+        {
+            commands.push_back (tokens);
+            write (client_fd, "+QUEUED\r\n", strlen("+QUEUED\r\n"));
+        }
         for (const auto& token : tokens)
         {
             processCommand(token);
