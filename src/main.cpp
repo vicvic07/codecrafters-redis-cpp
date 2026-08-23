@@ -678,13 +678,14 @@ void handleClient(int client_fd)
         {
             if (queued)
             {
-                wr=makeSimpleString("OK");
                 queued=0;
+                int cnt=0;
                 for (const auto& tokens : commands)
                 {
                     for (const auto& token : tokens)
                         processCommand(token);
                 }
+                wr=makeArray ("", 0);
             }
             else
                 wr=makeSimpleError("ERR EXEC without MULTI");
