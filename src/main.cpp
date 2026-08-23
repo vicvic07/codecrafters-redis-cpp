@@ -666,16 +666,18 @@ void handleClient(int client_fd)
     };
     auto checkModQueue = [&] (const RESPToken& token)
     {
-        bool ant_queue=queued;
+        bool ok=0;
         std::string wr="";
         RESPToken command=std::any_cast<std::vector<RESPToken>>(token.value)[0];
         if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "MULTI")
         {
+            ok=1;
             wr=makeSimpleString("OK");
             queued=1;
         }
         else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "EXEC")
         {
+            ok=1;
             if (queued)
             {
                 queued=0;
@@ -692,7 +694,7 @@ void handleClient(int client_fd)
         }
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
-        return ant_queue!=queued;
+        return ok;
     };
     while (true)
     {
@@ -709,9 +711,12 @@ void handleClient(int client_fd)
             commands.push_back (tokens);
             write (client_fd, "+QUEUED\r\n", strlen("+QUEUED\r\n"));
         }
-        for (const auto& token : tokens)
+        else
         {
-            processCommand(token);
+            for (const auto& token : tokens)
+            {
+                processCommand(token);
+            }
         }
     }
     close(client_fd);
