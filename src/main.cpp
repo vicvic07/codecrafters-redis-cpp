@@ -280,8 +280,10 @@ void handleClient(int client_fd)
 {
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
-    std::function<void(const RESPToken token)> processCommand;
-    processCommand = [&](const RESPToken& token)
+    std::function<void(const RESPToken token, bool take_output)> processCommand;
+    std::string outputs="";
+    int sz_outputs=0;
+    processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         auto tokenToId = [&] (RESPToken input)
         {
@@ -651,16 +653,24 @@ void handleClient(int client_fd)
                     }
                     else wr = "$-1\r\n";
                 }
-                else processCommand(element);
-                if (!wr.empty()) write(client_fd, wr.c_str(), wr.size());
+                else processCommand(element, take_output);
+                if (!wr.empty())
+                {
+                    if (take_output)
+                        ++sz_outputs, outputs+=wr;
+                    else
+                        ssize_t n=write (client_fd, wr.c_str(), wr.size());
+                }
             }
         }
         if (token.type == RESPType::BULK_STRING)
         {
             if (allUpper(std::any_cast<std::string>(token.value)) == "PING")
             {
-                ssize_t n = write(client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
-                std::cout << "\nSent: " << n << "\nWanted: " << strlen("+PONG\r\n") << "\n";;
+                if (take_output)
+                    ++sz_outputs, outputs+="+PONG\r\n";
+                else
+                    ssize_t n = write(client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
             }
         }
     };
@@ -682,12 +692,14 @@ void handleClient(int client_fd)
             {
                 queued=0;
                 int cnt=0;
+                sz_outputs=0;
+                outputs="";
                 for (const auto& tokens : commands)
                 {
                     for (const auto& token : tokens)
-                        processCommand(token);
+                        processCommand(token, 1);
                 }
-                wr=makeArray ("", 0);
+                wr=makeArray (outputs, sz_outputs);
             }
             else
                 wr=makeSimpleError("ERR EXEC without MULTI");
@@ -715,7 +727,7 @@ void handleClient(int client_fd)
         {
             for (const auto& token : tokens)
             {
-                processCommand(token);
+                processCommand(token, 0);
             }
         }
     }
