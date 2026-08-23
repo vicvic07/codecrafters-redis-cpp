@@ -269,6 +269,13 @@ std::pair<bool, RESPToken> valid (std::pair <long long int, int> id)
         }
     }
 }
+bool containsOnlyDigits (std::string input)
+{
+    bool ok=1;
+    for (const auto &ch : input)
+        ok &=isdigit(ch);
+    return ok;
+}
 void handleClient(int client_fd)
 {
     std::function<void(const RESPToken token)> processCommand;
@@ -309,6 +316,26 @@ void handleClient(int client_fd)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INCR")
+                {
+                    RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    if (variables.find(name) != variables.end())
+                    {
+                        if (containsOnlyDigits(std::any_cast<std::string>(variables[name].value)))
+                        {
+                            variables[name].value=std::to_string(atoi(std::any_cast<std::string>(variables[name].value).c_str())+1);
+                            variables[name].RESP_string=makeBulkString(std::any_cast<std::string>(variables[name].value));
+                            wr=makeInteger(std::any_cast<std::string>(variables[name].value));
+                        }
+                        else
+                            wr=makeSimpleError("ERR value is not an integer or out of range");
+                    }
+                    else
+                    {
+                        variables[name]={RESPType::BULK_STRING, "1", "$1"};
+                        wr=":1";
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XREAD")
                 {
