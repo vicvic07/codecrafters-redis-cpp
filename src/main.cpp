@@ -200,13 +200,12 @@ std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
+std::map<RESPToken, std::set<int>> watching_clients;
 enum WATCH_STATE
 {
-    UNWATCHED,
     WATCHED,
     MODIFIED
 };
-std::set <std::pair<RESPToken, WATCH_STATE>> watched_keys;
 std::pair <int, int> last_id={-1, -1};
 std::pair<bool, RESPToken> valid (std::pair <long long int, int> id)
 {
@@ -283,7 +282,9 @@ bool containsOnlyDigits (std::string input)
         ok &=isdigit(ch);
     return ok;
 }
-void handleClient(int client_fd)
+std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
+std::set <int> ids;
+void handleClient(int client_fd, int client_id)
 {
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
@@ -628,6 +629,14 @@ void handleClient(int client_fd)
                     {
                         std::lock_guard lock(db_mutex);
                         variables[name] = value;
+                        for (const auto &id : watching_clients[name])
+                        {
+                            if (watched_keys[id].find ({name, WATCHED})!=watched_keys[id].end())
+                            {
+                                watched_keys[id].erase ({name, WATCHED});
+                                watched_keys[id].insert ({name, MODIFIED});
+                            }
+                        }
                     }
                     if (i + 3 < std::any_cast<std::vector<RESPToken>>(token.value).size())
                     {
@@ -641,7 +650,11 @@ void handleClient(int client_fd)
                             }
                         }
                     }
-                    else variable_time.erase(name);
+                    else
+                    {
+                        std::lock_guard lock(db_mutex);
+                        variable_time.erase(name);
+                    }
                     wr = makeSimpleString("OK");
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GET")
@@ -683,6 +696,12 @@ void handleClient(int client_fd)
     };
     auto checkModQueue = [&] (const RESPToken& token)
     {
+        auto clearWatchlist = [&] ()
+        {
+            for (const auto& [key, state] : watched_keys[client_id])
+                watching_clients[key].erase (client_id);
+            watched_keys[client_id].clear();
+        };
         bool ok=0;
         std::string wr="";
         RESPToken command=std::any_cast<std::vector<RESPToken>>(token.value)[0];
@@ -697,19 +716,28 @@ void handleClient(int client_fd)
             ok=1;
             if (queued)
             {
-                queued=0;
-                int cnt=0;
                 sz_outputs=0;
                 outputs="";
-                for (const auto& tokens : commands)
+                bool discard=0;
+                for (const auto& [key, state] : watched_keys[client_id])
+                    if (state==MODIFIED)
+                        discard=1;
+                if (!discard)
                 {
-                    for (const auto& token : tokens)
-                        processCommand(token, 1);
+                    for (const auto& tokens : commands)
+                    {
+                        for (const auto& token : tokens)
+                            processCommand(token, 1);
+                    }
+                    wr=makeArray (outputs, sz_outputs);
                 }
-                wr=makeArray (outputs, sz_outputs);
+                else
+                    wr="*-1\r\n";
+                queued=0;
             }
             else
                 wr=makeSimpleError("ERR EXEC without MULTI");
+            clearWatchlist();
         }
         else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "DISCARD")
         {
@@ -722,6 +750,7 @@ void handleClient(int client_fd)
             }
             else
                 wr=makeSimpleError ("ERR DISCARD without MULTI");
+            clearWatchlist();
         }
         else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "WATCH")
         {
@@ -730,10 +759,19 @@ void handleClient(int client_fd)
                 wr=makeSimpleError ("ERR WATCH inside MULTI is not allowed");
             else
             {
-                RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[1];
-                watched_keys.insert ({key, WATCHED});
+                for (int i=1;i<std::any_cast<std::vector<RESPToken>>(token.value).size();i++)
+                {
+                    RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[i];
+                    watched_keys[client_id].insert ({key, WATCHED});
+                    watching_clients[key].insert(client_id);
+                }
                 wr=makeSimpleString ("OK");
             }
+        }
+        else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "UNWATCH")
+        {
+            wr=makeSimpleString ("OK");
+            clearWatchlist();
         }
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
@@ -763,6 +801,7 @@ void handleClient(int client_fd)
         }
     }
     close(client_fd);
+    ids.insert (client_id);
 }
 
 int main(int argc, char** argv)
@@ -800,11 +839,25 @@ int main(int argc, char** argv)
     struct sockaddr_in client_addr;
     int client_addr_len = sizeof(client_addr);
     std::cout << "Waiting for a client to connect...\n";
+    int last_client=-1;
+    auto nextId = [&] ()
+    {
+        if (ids.empty())
+        {
+            ++last_client;
+            watched_keys.push_back ({});
+            return last_client;
+        }
+        auto id=*ids.begin();
+        ids.erase(ids.begin());
+        return id;
+    };
     while (true)
     {
         int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
         std::cout << "Client connected\n";
-        std::thread client(handleClient, client_fd);
+        int id=nextId();
+        std::thread client(handleClient, client_fd, id);
         client.detach();
     }
     close(server_fd);
