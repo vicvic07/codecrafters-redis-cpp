@@ -734,6 +734,7 @@ void handleClient(int client_fd, int client_id)
                 else
                     wr="*-1\r\n";
                 queued=0;
+                commands.clear();
             }
             else
                 wr=makeSimpleError("ERR EXEC without MULTI");
@@ -856,8 +857,7 @@ int main(int argc, char** argv)
     {
         int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
         std::cout << "Client connected\n";
-        int id=nextId();
-        std::thread client(handleClient, client_fd, id);
+        std::thread client(handleClient, client_fd, nextId());
         client.detach();
     }
     close(server_fd);
