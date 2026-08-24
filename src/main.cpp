@@ -716,6 +716,11 @@ void handleClient(int client_fd)
             else
                 wr=makeSimpleError ("ERR DISCARD without MULTI");
         }
+        else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "WATCH")
+        {
+            ok=1;
+            wr=makeSimpleString ("OK");
+        }
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
         return ok;
