@@ -808,6 +808,11 @@ void handleClient(int client_fd, int client_id)
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
+    int port=6379;
+    if (argc>=3)
+    {
+        port=atoi (argv[2]);
+    }
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -825,10 +830,10 @@ int main(int argc, char** argv)
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(6379);
+    server_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0)
     {
-        std::cerr << "Failed to bind to port 6379\n";
+        std::cerr << "Failed to bind to port " << port << "\n";
         return 1;
     }
     int connection_backlog = 5;
