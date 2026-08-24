@@ -200,6 +200,13 @@ std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
+enum WATCH_STATE
+{
+    UNWATCHED,
+    WATCHED,
+    MODIFIED
+};
+std::set <std::pair<RESPToken, WATCH_STATE>> watched_keys;
 std::pair <int, int> last_id={-1, -1};
 std::pair<bool, RESPToken> valid (std::pair <long long int, int> id)
 {
@@ -719,7 +726,14 @@ void handleClient(int client_fd)
         else if (command.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(command.value)) == "WATCH")
         {
             ok=1;
-            wr=makeSimpleString ("OK");
+            if (queued)
+                wr=makeSimpleError ("ERR WATCH inside MULTI is not allowed");
+            else
+            {
+                RESPToken key = std::any_cast<std::vector<RESPToken>>(token.value)[1];
+                watched_keys.insert ({key, WATCHED});
+                wr=makeSimpleString ("OK");
+            }
         }
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
