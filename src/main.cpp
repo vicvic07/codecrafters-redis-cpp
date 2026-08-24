@@ -191,7 +191,7 @@ std::string allUpper(std::string input)
     for (auto& ch : input) ch = toupper(ch);
     return input;
 }
-
+bool is_replica=0;
 std::mutex db_mutex;
 std::mutex wait_mutex;
 std::mutex stream_mutex;
@@ -328,6 +328,11 @@ void handleClient(int client_fd, int client_id)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INFO")
+                {
+                    std::string role = is_replica?"slave":"master";
+                    wr=makeBulkString("# Replication\nrole:"+role);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INCR")
                 {
@@ -811,7 +816,23 @@ int main(int argc, char** argv)
     int port=6379;
     if (argc>=3)
     {
-        port=atoi (argv[2]);
+        for (int i=0;i<argc;i++)
+        {
+            int n=strlen (argv[i]);
+            if (n>=2 && argv[i][0]=='-' && argv[i][1]=='-')
+            {
+                int ptr=0;
+                std::string flag = nextWord (ptr, argv[i], "- \n");
+                if (flag=="port")
+                {
+                    port = atoi (argv[i+1]);
+                }
+                else if (flag=="replicaof")
+                {
+                    is_replica=1;
+                }
+            }
+        }
     }
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
