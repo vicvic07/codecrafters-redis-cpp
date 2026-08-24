@@ -201,6 +201,8 @@ std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPT
 std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 std::map<RESPToken, std::set<int>> watching_clients;
+std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
+int offset=0;
 enum WATCH_STATE
 {
     WATCHED,
@@ -331,8 +333,8 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INFO")
                 {
-                    std::string role = is_replica?"slave":"master";
-                    wr=makeBulkString("# Replication\nrole:"+role);
+                    std::string replication=std::string("# Replication\nrole:")+(is_replica?"slave\n":"master\n")+"master_replid:"+replication_id+"\nmaster_repl_offset:"+std::to_string(offset);
+                    wr=makeBulkString (replication);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INCR")
                 {
