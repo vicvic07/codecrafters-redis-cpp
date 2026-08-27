@@ -859,11 +859,16 @@ int main(int argc, char** argv)
                         wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString("listening-port")+makeBulkString(std::to_string(port)), 3);
                         write (master_fd, wr.c_str(), wr.size());
                         memset (input, 0, sizeof(input));
-                        n=read (master_fd, &input, sizeof(input));
-                        if (n!=0 && strcmp(input, "+OK\r\n")==0)
+                        if (ssize_t n=read (master_fd, &input, sizeof(input))!=0 && strcmp(input, "+OK\r\n")==0)
                         {
                             wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("capa")+makeBulkString("psync2"), 3);
                             write (master_fd, wr.c_str(), wr.size());
+                            memset (input, 0, sizeof(input));
+                            if (ssize_t n=read (master_fd, &input, sizeof(input))!=0 && strcmp(input, "+OK\r\n")==0)
+                            {
+                                wr=makeArray (makeBulkString ("PSYNC")+makeBulkString ("?")+makeBulkString("-1"), 3);
+                                write(master_fd, wr.c_str(), wr.size());
+                            }
                         }
                     }
                     close (master_fd);
