@@ -815,6 +815,8 @@ void handleClient(int client_fd, int client_id)
 int main(int argc, char** argv)
 {
     // Flush after every std::cout / std::cerr
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
     int port=6379;
     if (argc>=3)
     {
@@ -832,12 +834,26 @@ int main(int argc, char** argv)
                 else if (flag=="replicaof")
                 {
                     is_replica=1;
+                    int master_fd = socket (AF_INET, SOCK_STREAM, 0);
+                    int ptr=0;
+                    std::string addr = nextWord (ptr, argv[i+1], " ");
+                    std::string port = nextWord (ptr, argv[i+1], " ");
+                    struct sockaddr_in master_addr;
+                    master_addr.sin_family = AF_INET;
+                    master_addr.sin_addr.s_addr = inet_addr (addr=="localhost"?"127.0.0.1":addr.c_str());
+                    master_addr.sin_port = htons (atoi(port.c_str()));
+                    if (connect (master_fd, (struct sockaddr*)&master_addr, sizeof(master_addr)) != 0)
+                    {
+                        std::cout << "Failed to connect to master";
+                        return 1;
+                    }
+                    std::string wr=makeArray (makeBulkString ("PING"), 1);
+                    write (master_fd, wr.c_str(), wr.size());
+                    close (master_fd);
                 }
             }
         }
     }
-    std::cout << std::unitbuf;
-    std::cerr << std::unitbuf;
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
