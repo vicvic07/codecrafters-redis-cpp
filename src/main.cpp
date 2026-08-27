@@ -331,6 +331,10 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "REPLCONF")
+                {
+                    wr=makeSimpleString ("OK");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INFO")
                 {
                     std::string replication=std::string("# Replication\nrole:")+(is_replica?"slave\n":"master\n")+"master_replid:"+replication_id+"\nmaster_repl_offset:"+std::to_string(offset);
@@ -836,12 +840,12 @@ int main(int argc, char** argv)
                     is_replica=1;
                     int master_fd = socket (AF_INET, SOCK_STREAM, 0);
                     int ptr=0;
-                    std::string addr = nextWord (ptr, argv[i+1], " ");
-                    std::string port = nextWord (ptr, argv[i+1], " ");
+                    std::string master_addr_ipv4 = nextWord (ptr, argv[i+1], " ");
+                    std::string master_port = nextWord (ptr, argv[i+1], " ");
                     struct sockaddr_in master_addr;
                     master_addr.sin_family = AF_INET;
-                    master_addr.sin_addr.s_addr = inet_addr (addr=="localhost"?"127.0.0.1":addr.c_str());
-                    master_addr.sin_port = htons (atoi(port.c_str()));
+                    master_addr.sin_addr.s_addr = inet_addr (master_addr_ipv4=="localhost"?"127.0.0.1":master_addr_ipv4.c_str());
+                    master_addr.sin_port = htons (atoi(master_port.c_str()));
                     if (connect (master_fd, (struct sockaddr*)&master_addr, sizeof(master_addr)) != 0)
                     {
                         std::cout << "Failed to connect to master";
@@ -849,6 +853,19 @@ int main(int argc, char** argv)
                     }
                     std::string wr=makeArray (makeBulkString ("PING"), 1);
                     write (master_fd, wr.c_str(), wr.size());
+                    char input[4096]={0};
+                    if (ssize_t n=read (master_fd, &input, sizeof(input))!=0 && strcmp(input, "+PONG\r\n")==0)
+                    {
+                        wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString("listening-port")+makeBulkString(std::to_string(port)), 3);
+                        write (master_fd, wr.c_str(), wr.size());
+                        memset (input, 0, sizeof(input));
+                        n=read (master_fd, &input, sizeof(input));
+                        if (n!=0 && strcmp(input, "+OK\r\n")==0)
+                        {
+                            wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("capa")+makeBulkString("psync2"), 3);
+                            write (master_fd, wr.c_str(), wr.size());
+                        }
+                    }
                     close (master_fd);
                 }
             }
