@@ -331,6 +331,10 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
+                {
+                    wr=makeSimpleString("FULLRESYNC "+replication_id+" 0");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "REPLCONF")
                 {
                     wr=makeSimpleString ("OK");
