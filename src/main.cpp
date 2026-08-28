@@ -350,7 +350,7 @@ void handleClient(int client_fd, int client_id)
                     auto start = std::chrono::system_clock::now();
                     replicas_responded=0;
                     while (replicas_responded<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
-                    wr=makeInteger (std::to_string(replicas_responded));
+                    wr=makeInteger (std::to_string(replica_fds.size()));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
                 {
