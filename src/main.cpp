@@ -209,6 +209,7 @@ std::map<RESPToken, std::deque<RESPToken>> lists;
 std::map<RESPToken, std::set<int>> watching_clients;
 std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
 int offset=0;
+std::string rdb_dir, rdb_name;
 enum WATCH_STATE
 {
     WATCHED,
@@ -354,6 +355,19 @@ void handleClient(int client_fd, int client_id)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "CONFIG")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (std::any_cast<std::string>(arg.value)=="GET")
+                    {
+                        RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                        if (std::any_cast<std::string>(name.value) == "dir")
+                            wr=makeArray (makeBulkString ("dir")+makeBulkString(rdb_dir), 2);
+                        else
+                            wr=makeArray (makeBulkString("dbfilename")+makeBulkString(rdb_name), 2);
+                        i+=1;
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "WAIT")
                 {
@@ -1022,6 +1036,10 @@ int main(int argc, char** argv)
                         }
                     }
                 }
+                else if (flag=="dir")
+                    rdb_dir = argv[i+1];
+                else if (flag=="dump.rdb")
+                    rdb_name = argv[i+1];
             }
         }
     }
