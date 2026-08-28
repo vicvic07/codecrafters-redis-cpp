@@ -288,6 +288,7 @@ bool containsOnlyDigits (std::string input)
 std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
 std::set <int> ids;
 std::set <int> replica_fds;
+std::map <int, int> replica_ports;
 void handleClient(int client_fd, int client_id)
 {
     std::vector <std::vector<RESPToken>> commands;
@@ -371,6 +372,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XREAD")
                 {
+                    wr_exception=1;
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     int req_time = -1;
                     auto start = std::chrono::system_clock::now();
@@ -382,6 +384,7 @@ void handleClient(int client_fd, int client_id)
                     }
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "STREAMS")
                     {
+                        wr_exception=1;
                         wr="";
                         std::string first_output="none";
                         std::vector <std::pair<bool, std::pair<long long, long long>>> only_new;
@@ -444,6 +447,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XRANGE")
                 {
+                    wr_exception=1;
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     std::pair <long long, long long> start=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+2]), end=tokenToId(std::any_cast<std::vector<RESPToken>>(token.value)[i+3]);
                     int p=lowerBoundId (streams, name, start);
@@ -491,6 +495,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "TYPE")
                 {
+                    wr_exception=1;
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (variables.find(name) != variables.end())
                         wr = makeSimpleString ("string");
@@ -566,6 +571,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LLEN")
                 {
+                    wr_exception=1;
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeInteger(std::to_string(lists[name].size()));
                 }
@@ -590,6 +596,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LRANGE")
                 {
+                    wr_exception=1;
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     std::cout << std::any_cast<std::string>(name.value) << " " << lists[name].size() << "\n";
                     if (lists.find(name) == lists.end())
@@ -679,8 +686,13 @@ void handleClient(int client_fd, int client_id)
                     }
                     wr = makeSimpleString("OK");
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PING")
+                {
+                    wr=makeSimpleString("PONG");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GET")
                 {
+                    wr_exception=1;
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     if (variables.find(name) != variables.end())
                     {
@@ -705,18 +717,6 @@ void handleClient(int client_fd, int client_id)
                     else
                         ssize_t n=write (client_fd, wr.c_str(), wr.size());
                 }
-            }
-        }
-        if (token.type == RESPType::BULK_STRING)
-        {
-            if (allUpper(std::any_cast<std::string>(token.value)) == "PING")
-            {
-                if (is_replica)
-                    return;
-                if (take_output)
-                    ++sz_outputs, outputs+="+PONG\r\n";
-                else
-                    ssize_t n = write(client_fd, "+PONG\r\n", strlen("+PONG\r\n"));
             }
         }
     };
@@ -858,10 +858,23 @@ void handleClient(int client_fd, int client_id)
 
 int main(int argc, char** argv)
 {
+    int port=6379;
     // Flush after every std::cout / std::cerr
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
-    int port=6379;
+    int last_client=-1;
+    auto nextId = [&] ()
+    {
+        if (ids.empty())
+        {
+            ++last_client;
+            ids.insert (last_client);
+            watched_keys.push_back ({});
+        }
+        auto id=*ids.begin();
+        ids.erase(ids.begin());
+        return id;
+    };
     if (argc>=3)
     {
         for (int i=0;i<argc;i++)
@@ -908,10 +921,13 @@ int main(int argc, char** argv)
                             {
                                 wr=makeArray (makeBulkString ("PSYNC")+makeBulkString ("?")+makeBulkString("-1"), 3);
                                 write(master_fd, wr.c_str(), wr.size());
+                                char buff[4096]={0};
+                                read (master_fd, buff, sizeof(buff));
+                                std::thread master_connection(handleClient, master_fd, nextId());
+                                master_connection.detach();
                             }
                         }
                     }
-                    close (master_fd);
                 }
             }
         }
@@ -946,23 +962,11 @@ int main(int argc, char** argv)
     struct sockaddr_in client_addr;
     int client_addr_len = sizeof(client_addr);
     std::cout << "Waiting for a client to connect...\n";
-    int last_client=-1;
-    auto nextId = [&] ()
-    {
-        if (ids.empty())
-        {
-            ++last_client;
-            watched_keys.push_back ({});
-            return last_client;
-        }
-        auto id=*ids.begin();
-        ids.erase(ids.begin());
-        return id;
-    };
+    std::cout << "Current port: " << ntohs(server_addr.sin_port) << "\n";
     while (true)
     {
         int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
-        std::cout << "Client connected\n";
+        std::cout << "Client connected from port " << ntohs(client_addr.sin_port) << "\n";
         std::thread client(handleClient, client_fd, nextId());
         client.detach();
     }
