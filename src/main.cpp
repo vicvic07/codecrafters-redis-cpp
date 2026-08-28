@@ -296,6 +296,7 @@ std::set <int> replica_fds;
 std::map <int, int> replica_ports;
 void handleClient(int client_fd, int client_id)
 {
+    int replicas_responded=0;
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
@@ -342,6 +343,15 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "WAIT")
+                {
+                    int nr = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
+                    int time = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
+                    auto start = std::chrono::system_clock::now();
+                    replicas_responded=0;
+                    while (replicas_responded<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
+                    wr=makeInteger (std::to_string(replicas_responded));
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
                 {
                     wr=makeSimpleString("FULLRESYNC "+replication_id+" 0");
@@ -352,6 +362,8 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETACK")
                         wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed-37)), 3);
+                    else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "ACK")
+                        ++replicas_responded;
                     else
                         wr=makeSimpleString ("OK");
 
