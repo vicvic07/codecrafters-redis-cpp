@@ -293,10 +293,12 @@ bool containsOnlyDigits (std::string input)
 std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
 std::set <int> ids;
 std::set <int> replica_fds;
+std::map <int, int> replica_bytes;
 std::map <int, int> replica_ports;
+std::map <int, bool> replica_synced;
 void handleClient(int client_fd, int client_id)
 {
-    int replicas_responded=0;
+    int replicas_synced=0;
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
@@ -331,6 +333,16 @@ void handleClient(int client_fd, int client_id)
             }
             return p+1;
         };
+        auto updateReplicaStatus = [&] ()
+        {
+            for (auto fd : replica_fds)
+            {
+                write (fd, token.RESP_string.c_str(), token.RESP_string.size());
+                replica_bytes[fd]+=token.RESP_string.size();
+                if (replica_synced[fd])
+                    replica_synced[fd]=0;
+            }
+        };
         if (token.type == RESPType::ARRAY)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -348,9 +360,29 @@ void handleClient(int client_fd, int client_id)
                     int nr = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
                     int time = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
                     auto start = std::chrono::system_clock::now();
-                    replicas_responded=0;
-                    while (replicas_responded<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
-                    wr=makeInteger (std::to_string(replica_fds.size()));
+                    auto query = [&] (int fd)
+                    {
+                        std::string wr2="";
+                        wr2=makeArray (makeBulkString ("REPLCONF")+makeBulkString("GETACK")+makeBulkString("*"), 3);
+                        write (fd, wr2.c_str(), wr2.size());
+                        char buff[4096]={0};
+                        read (fd, &buff, sizeof(buff));
+                        replica_synced[fd]=1;
+                        replicas_synced++;
+                    };
+                    int already_synced=0;
+                    for (auto fd : replica_fds)
+                    {
+                        if (replica_synced[fd])
+                        {
+                            ++already_synced;
+                            continue;
+                        }
+                        std::thread query_replica (query, fd);
+                        query_replica.detach();
+                    }
+                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
+                    wr=makeInteger (std::to_string(already_synced+replicas_synced));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
                 {
@@ -362,8 +394,6 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETACK")
                         wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed-37)), 3);
-                    else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "ACK")
-                        ++replicas_responded;
                     else
                         wr=makeSimpleString ("OK");
 
@@ -491,6 +521,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "XADD")
                 {
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     RESPToken id_token = std::any_cast<std::vector<RESPToken>>(token.value)[i+2];
                     i+=3;
@@ -530,6 +561,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BLPOP")
                 {
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     std::chrono::time_point<std::chrono::system_clock> req_time;
                     {
@@ -565,6 +597,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "RPUSH")
                 {
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     i += 2;
                     for (; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -580,6 +613,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LPUSH")
                 {
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     i += 2;
                     for (; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -601,6 +635,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "LPOP")
                 {
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     if (lists.find(name) == lists.end()) wr = "$-1\r\n";
                     else
@@ -674,8 +709,7 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SET")
                 {
-                    for (auto fd : replica_fds)
-                        write (fd, token.RESP_string.c_str(), token.RESP_string.size());
+                    updateReplicaStatus();
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
                     auto time_now = std::chrono::system_clock::now();
@@ -739,7 +773,11 @@ void handleClient(int client_fd, int client_id)
                     if (take_output)
                         ++sz_outputs, outputs+=wr;
                     else
+                    {
                         ssize_t n=write (client_fd, wr.c_str(), wr.size());
+                        if (replica_fds.find(client_fd)!=replica_fds.end())
+                            replica_bytes[client_fd]+=n;
+                    }
                 }
             }
         }
@@ -866,6 +904,7 @@ void handleClient(int client_fd, int client_id)
                 wr.pop_back();
                 ssize_t n=write (client_fd, wr.c_str(), wr.size());
                 replica_fds.insert (client_fd);
+                replica_bytes[client_fd]+=wr.size();
             }
             else
             {
@@ -873,6 +912,8 @@ void handleClient(int client_fd, int client_id)
                 exit (1);
             }
             replica_initialized=0;
+            replicas_synced++;
+            replica_synced[client_fd]=1;
         }
     }
     replica_fds.erase (client_fd);
