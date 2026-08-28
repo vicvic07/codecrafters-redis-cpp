@@ -287,7 +287,7 @@ bool containsOnlyDigits (std::string input)
 }
 std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
 std::set <int> ids;
-std::set <std::pair<std::string, int>> replica_sockets;
+std::set <int> replica_fds;
 void handleClient(int client_fd, int client_id)
 {
     std::vector <std::vector<RESPToken>> commands;
@@ -295,7 +295,7 @@ void handleClient(int client_fd, int client_id)
     std::function<void(const RESPToken token, bool take_output)> processCommand;
     std::string outputs="";
     int sz_outputs=0;
-    bool replica_initialized=0;
+    bool replica_initialized=0, wr_exception=0;
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         auto tokenToId = [&] (RESPToken input)
@@ -347,6 +347,7 @@ void handleClient(int client_fd, int client_id)
                 {
                     std::string replication=std::string("# Replication\nrole:")+(is_replica?"slave\n":"master\n")+"master_replid:"+replication_id+"\nmaster_repl_offset:"+std::to_string(offset);
                     wr=makeBulkString (replication);
+                    wr_exception=1;
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INCR")
                 {
@@ -642,6 +643,8 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SET")
                 {
+                    for (auto fd : replica_fds)
+                        write (fd, token.RESP_string.c_str(), token.RESP_string.size());
                     RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     RESPToken value = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
                     auto time_now = std::chrono::system_clock::now();
@@ -695,6 +698,8 @@ void handleClient(int client_fd, int client_id)
                 else processCommand(element, take_output);
                 if (!wr.empty())
                 {
+                    if (is_replica && !wr_exception)
+                        continue;
                     if (take_output)
                         ++sz_outputs, outputs+=wr;
                     else
@@ -706,6 +711,8 @@ void handleClient(int client_fd, int client_id)
         {
             if (allUpper(std::any_cast<std::string>(token.value)) == "PING")
             {
+                if (is_replica)
+                    return;
                 if (take_output)
                     ++sz_outputs, outputs+="+PONG\r\n";
                 else
@@ -793,6 +800,8 @@ void handleClient(int client_fd, int client_id)
             wr=makeSimpleString ("OK");
             clearWatchlist();
         }
+        if (is_replica)
+            return ok;
         if (!wr.empty())
             write (client_fd, wr.c_str(), wr.size());
         return ok;
@@ -832,6 +841,7 @@ void handleClient(int client_fd, int client_id)
                 wr.pop_back();
                 wr.pop_back();
                 write (client_fd, wr.c_str(), wr.size());
+                replica_fds.insert (client_fd);
             }
             else
             {
@@ -841,6 +851,7 @@ void handleClient(int client_fd, int client_id)
             replica_initialized=0;
         }
     }
+    replica_fds.erase (client_fd);
     close(client_fd);
     ids.insert (client_id);
 }
