@@ -334,6 +334,7 @@ void handleClient(int client_fd, int client_id)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
             {
+                wr_exception=0;
                 std::string wr = "";
                 RESPToken element = std::any_cast<std::vector<RESPToken>>(token.value)[i];
                 if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ECHO")
@@ -959,10 +960,9 @@ int main(int argc, char** argv)
                                 /// firstly we need to read the fullresync response...
                                 std::string response = readUntil (master_fd, "\r\n");
                                 /// then we read the (empty) db...
-                                std::string sz_string = readUntil (master_fd, "\r\n");
-                                int sz=atoi(sz_string.substr(1, sz_string.size()-3).c_str());
-                                sz_string+=readBytes (master_fd, sz);
-                                std::cout << sz_string << "\n";
+                                std::string rdb = readUntil (master_fd, "\r\n");
+                                int sz=atoi(rdb.substr(1, rdb.size()-3).c_str());
+                                rdb+=readBytes (master_fd, sz);
                                 std::thread master_connection(handleClient, master_fd, nextId());
                                 master_connection.detach();
                             }
