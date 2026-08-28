@@ -82,7 +82,7 @@ std::vector<RESPToken> tokenize(std::string input)
     {
         /// always returns a string, gets processed later, if needed
         std::string ret = "";
-        while (ptr < input.size() && !(input[ptr] == '\r' && input[ptr + 1] == '\n')) ret += input[ptr++];
+        while (ptr < input.size()-1 && !(input[ptr] == '\r' && input[ptr + 1] == '\n')) ret += input[ptr++];
         ptr += 2;
         return ret;
     };
@@ -117,7 +117,12 @@ std::vector<RESPToken> tokenize(std::string input)
         ++ptr;
         int sz = atoi(nextArg().c_str());
         std::string bytes;
-        for (int i = 1; i <= sz; i++) bytes.append(input, ptr++, 1);
+        for (int i = 1; i <= sz; i++)
+        {
+            if (ptr>input.size())
+                std::cout << "End my shitty ass life now! " << input << "\n";
+            bytes.append(input, ptr++, 1);
+        }
         ptr += 2;
         return RESPToken{RESPType::BULK_STRING, bytes, input.substr(initial, ptr - initial)};
     };
@@ -297,6 +302,7 @@ void handleClient(int client_fd, int client_id)
     std::string outputs="";
     int sz_outputs=0;
     bool replica_initialized=0, wr_exception=0;
+    ssize_t bytes_processed=0;
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         auto tokenToId = [&] (RESPToken input)
@@ -342,7 +348,11 @@ void handleClient(int client_fd, int client_id)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "REPLCONF")
                 {
-                    wr=makeSimpleString ("OK");
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETACK")
+                        wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed)), 3);
+                    else
+                        wr=makeSimpleString ("OK");
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INFO")
                 {
@@ -840,7 +850,7 @@ void handleClient(int client_fd, int client_id)
                 wr=makeBulkString (wr);
                 wr.pop_back();
                 wr.pop_back();
-                write (client_fd, wr.c_str(), wr.size());
+                ssize_t n=write (client_fd, wr.c_str(), wr.size());
                 replica_fds.insert (client_fd);
             }
             else
@@ -850,12 +860,36 @@ void handleClient(int client_fd, int client_id)
             }
             replica_initialized=0;
         }
+        bytes_processed+=nr_bytes;
     }
     replica_fds.erase (client_fd);
     close(client_fd);
     ids.insert (client_id);
 }
-
+std::string readUntil (int fd, std::string final)
+{
+    std::string input="";
+    while (true)
+    {
+        char buff[1]={0};
+        read (fd, &buff, 1);
+        input.append (buff);
+        if (input.size()>=final.size() && input.substr (input.size()-final.size(), final.size())==final)
+            break;
+    }
+    return input;
+}
+std::string readBytes (int fd, int nr)
+{
+    std::string ret="";
+    while (nr--)
+    {
+        char buff[1]={0};
+        read (fd, &buff, 1);
+        ret.append (buff);
+    }
+    return ret;
+}
 int main(int argc, char** argv)
 {
     int port=6379;
@@ -921,8 +955,14 @@ int main(int argc, char** argv)
                             {
                                 wr=makeArray (makeBulkString ("PSYNC")+makeBulkString ("?")+makeBulkString("-1"), 3);
                                 write(master_fd, wr.c_str(), wr.size());
-                                char buff[4096]={0};
-                                read (master_fd, buff, sizeof(buff));
+                                memset (input, 0, sizeof(input));
+                                /// firstly we need to read the fullresync response...
+                                std::string response = readUntil (master_fd, "\r\n");
+                                /// then we read the (empty) db...
+                                std::string sz_string = readUntil (master_fd, "\r\n");
+                                int sz=atoi(sz_string.substr(1, sz_string.size()-3).c_str());
+                                sz_string+=readBytes (master_fd, sz);
+                                std::cout << sz_string << "\n";
                                 std::thread master_connection(handleClient, master_fd, nextId());
                                 master_connection.detach();
                             }
