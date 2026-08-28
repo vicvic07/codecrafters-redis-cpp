@@ -18,6 +18,7 @@
 #include <chrono>
 #include <deque>
 #include <mutex>
+#include <fstream>
 
 enum class RESPType
 {
@@ -286,6 +287,7 @@ bool containsOnlyDigits (std::string input)
 }
 std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
 std::set <int> ids;
+std::set <std::pair<std::string, int>> replica_sockets;
 void handleClient(int client_fd, int client_id)
 {
     std::vector <std::vector<RESPToken>> commands;
@@ -293,6 +295,7 @@ void handleClient(int client_fd, int client_id)
     std::function<void(const RESPToken token, bool take_output)> processCommand;
     std::string outputs="";
     int sz_outputs=0;
+    bool replica_initialized=0;
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         auto tokenToId = [&] (RESPToken input)
@@ -334,6 +337,7 @@ void handleClient(int client_fd, int client_id)
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
                 {
                     wr=makeSimpleString("FULLRESYNC "+replication_id+" 0");
+                    replica_initialized=1;
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "REPLCONF")
                 {
@@ -814,6 +818,27 @@ void handleClient(int client_fd, int client_id)
             {
                 processCommand(token, 0);
             }
+        }
+        if (replica_initialized)
+        {
+            FILE *f;
+            std::string wr="";
+            if (f=fopen ("./empty.rdb", "r"))
+            {
+                char buff[4096]={0};
+                while (fread (buff, 1, 4096, f))
+                    wr.append (buff);
+                wr=makeBulkString (wr);
+                wr.pop_back();
+                wr.pop_back();
+                write (client_fd, wr.c_str(), wr.size());
+            }
+            else
+            {
+                std::cout << "Failed to open database!";
+                exit (1);
+            }
+            replica_initialized=0;
         }
     }
     close(client_fd);
