@@ -351,9 +351,10 @@ void handleClient(int client_fd, int client_id)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETACK")
-                        wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed)), 3);
+                        wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed-37)), 3);
                     else
                         wr=makeSimpleString ("OK");
+
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "INFO")
                 {
@@ -821,7 +822,7 @@ void handleClient(int client_fd, int client_id)
     {
         char buff[4096] = {0};
         ssize_t nr_bytes = read(client_fd, &buff, sizeof(buff));
-        int ptr = 0;
+        bytes_processed+=nr_bytes;
         std::vector<RESPToken> tokens = tokenize(std::string(buff));
         if (tokens.empty())
             continue;
@@ -861,7 +862,6 @@ void handleClient(int client_fd, int client_id)
             }
             replica_initialized=0;
         }
-        bytes_processed+=nr_bytes;
     }
     replica_fds.erase (client_fd);
     close(client_fd);
