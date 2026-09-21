@@ -1084,7 +1084,6 @@ int main(int argc, char** argv)
                         while (len--)
                             name+=input[i++];
                         len = input[i++];
-                        std::cout << len << "\n";
                         std::string value;
                         while (len--)
                             value+=input[i++];
