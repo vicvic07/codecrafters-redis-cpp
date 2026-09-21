@@ -417,7 +417,7 @@ void handleClient(int client_fd, int client_id)
                         query_replica.detach();
                     }
                     start = std::chrono::system_clock::now();
-                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time+400);
+                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
                     wr=makeInteger (std::to_string(already_synced+replicas_synced));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
