@@ -392,6 +392,8 @@ void handleClient(int client_fd, int client_id)
                         write (fd, wr2.c_str(), wr2.size());
                         char buff[4096]={0};
                         read (fd, &buff, sizeof(buff));
+                        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()>time)
+                            return;
                         replica_synced[fd]=1;
                         replicas_synced++;
                     };
@@ -1076,6 +1078,8 @@ int main(int argc, char** argv)
                 }
                 if (started)
                 {
+                    if ((int)ch==0xff)
+                        started=0;
                     if ((int)ch==0x00)
                     {
                         int len = input[i+1];
