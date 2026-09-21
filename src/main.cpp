@@ -7,6 +7,7 @@
 #include <vector>
 #include <set>
 #include <iomanip>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <cassert>
 #include <sys/socket.h>
@@ -200,6 +201,7 @@ std::string allUpper(std::string input)
 }
 bool is_replica=0;
 std::mutex db_mutex;
+std::mutex synced_mutex;
 std::mutex wait_mutex;
 std::mutex stream_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
@@ -384,16 +386,22 @@ void handleClient(int client_fd, int client_id)
                 {
                     int nr = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
                     int time = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
-                    auto start = std::chrono::system_clock::now();
+                    std::chrono::system_clock::time_point start;
+                    replicas_synced=0;
                     auto query = [&] (int fd)
                     {
+                        int flags = fcntl(fd, F_GETFL, 0);
+                        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
                         std::string wr2="";
                         wr2=makeArray (makeBulkString ("REPLCONF")+makeBulkString("GETACK")+makeBulkString("*"), 3);
                         write (fd, wr2.c_str(), wr2.size());
-                        char buff[4096]={0};
-                        read (fd, &buff, sizeof(buff));
-                        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()>time)
-                            return;
+                        char buff[128]={0};
+                        while (1)
+                        {
+                            auto n=read (fd, &buff, sizeof(buff));
+                            if (n!=0)
+                                break;
+                        }
                         replica_synced[fd]=1;
                         replicas_synced++;
                     };
@@ -408,7 +416,8 @@ void handleClient(int client_fd, int client_id)
                         std::thread query_replica (query, fd);
                         query_replica.detach();
                     }
-                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
+                    start = std::chrono::system_clock::now();
+                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time+400);
                     wr=makeInteger (std::to_string(already_synced+replicas_synced));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
