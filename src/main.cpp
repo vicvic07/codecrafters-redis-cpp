@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 #include <set>
+#include <iomanip>
 #include <sys/types.h>
 #include <cassert>
 #include <sys/socket.h>
@@ -355,6 +356,16 @@ void handleClient(int client_fd, int client_id)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "KEYS")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (std::any_cast<std::string>(arg.value)=="*")
+                    {
+                        for (auto [variable, value] : variables)
+                            wr+=variable.RESP_string;
+                        wr=makeArray (wr, (int)variables.size());
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "CONFIG")
                 {
@@ -1038,8 +1049,49 @@ int main(int argc, char** argv)
                 }
                 else if (flag=="dir")
                     rdb_dir = argv[i+1];
-                else if (flag=="dump.rdb")
+                else if (flag=="dbfilename")
                     rdb_name = argv[i+1];
+            }
+        }
+    }
+    if (!rdb_name.empty())
+    {
+        FILE *f;
+        if (f=fopen ((rdb_dir+"/"+rdb_name).c_str(), "rb"))
+        {
+            std::string input;
+            char buff[4096]={0};
+            unsigned long n;
+            while (n=fread (&buff, sizeof(*buff), sizeof(buff), f))
+                input.append(buff, n);
+            int ptr=0;
+            bool started=0;
+            for (int i=0;i<input.size();i++)
+            {
+                unsigned char ch=input[i];
+                if ((int)ch==0xfb)
+                {
+                    i+=2;
+                    started=1;
+                }
+                if (started)
+                {
+                    if ((int)ch==0x00)
+                    {
+                        int len = input[i+1];
+                        std::string name;
+                        i+=2;
+                        while (len--)
+                            name+=input[i++];
+                        len = input[i++];
+                        std::cout << len << "\n";
+                        std::string value;
+                        while (len--)
+                            value+=input[i++];
+                        variables[{RESPType::BULK_STRING, name, makeBulkString(name)}]={RESPType::BULK_STRING, value, makeBulkString(value)};
+                        i--;
+                    }
+                }
             }
         }
     }
