@@ -207,7 +207,7 @@ std::mutex stream_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
 std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
-std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, int>> variable_time;
+std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, unsigned long>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 std::map<RESPToken, std::set<int>> watching_clients;
 std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
@@ -1077,6 +1077,7 @@ int main(int argc, char** argv)
                 input.append(buff, n);
             int ptr=0;
             bool started=0;
+            unsigned long time=-1;
             for (int i=0;i<input.size();i++)
             {
                 unsigned char ch=input[i];
@@ -1089,7 +1090,7 @@ int main(int argc, char** argv)
                 {
                     if ((int)ch==0xff)
                         started=0;
-                    if ((int)ch==0x00)
+                    else if ((int)ch==0x00)
                     {
                         int len = input[i+1];
                         std::string name;
@@ -1100,8 +1101,37 @@ int main(int argc, char** argv)
                         std::string value;
                         while (len--)
                             value+=input[i++];
-                        variables[{RESPType::BULK_STRING, name, makeBulkString(name)}]={RESPType::BULK_STRING, value, makeBulkString(value)};
+                        if (time!=-1)
+                        {
+                            auto time_point=std::chrono::system_clock::now();
+                            std::cout << time << " " << std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count() << "\n";
+                            if (time>=std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count())
+                            {
+                                variables[{RESPType::BULK_STRING, name, makeBulkString(name)}]={RESPType::BULK_STRING, value, makeBulkString(value)};
+                                variable_time[{RESPType::BULK_STRING, name, makeBulkString(name)}]={time_point, time-std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count()};
+                            }
+                            time=-1;
+                        }
+                        else
+                            variables[{RESPType::BULK_STRING, name, makeBulkString(name)}]={RESPType::BULK_STRING, value, makeBulkString(value)};
                         i--;
+                    }
+                    else if ((int)ch==0xfc)
+                    {
+                        unsigned long p=1;
+                        time=0;
+                        for (int j=i+1;j<=i+8;j++, p*=256)
+                            time+=p*(int)(unsigned char)input[j];
+                        i+=8;
+                    }
+                    else if ((int)ch==0xfd)
+                    {
+                        unsigned long p=1;
+                        time=0;
+                        for (int j=i+1;j<=i+4;j++, p*=256)
+                            time+=p*(int)(unsigned char)input[j];
+                        time*=1000;
+                        i+=4;
                     }
                 }
             }
