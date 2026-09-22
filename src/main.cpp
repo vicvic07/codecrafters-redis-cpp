@@ -207,7 +207,7 @@ std::mutex stream_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
 std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
-std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, unsigned long>> variable_time;
+std::map<RESPToken, std::pair<std::chrono::time_point<std::chrono::system_clock>, long long>> variable_time;
 std::map<RESPToken, std::deque<RESPToken>> lists;
 std::map<RESPToken, std::set<int>> watching_clients;
 std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
