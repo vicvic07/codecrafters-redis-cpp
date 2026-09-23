@@ -4,6 +4,8 @@
 #include <cstring>
 #include <unistd.h>
 #include <variant>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <vector>
 #include <set>
 #include <iomanip>
@@ -203,6 +205,7 @@ std::string allUpper(std::string input)
     return input;
 }
 bool is_replica=0;
+char *external_command;
 std::condition_variable ack_cv;
 std::mutex db_mutex;
 std::mutex synced_mutex;
@@ -307,7 +310,7 @@ std::set <int> replica_fds;
 std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
-void handleClient(int client_fd, int client_id)
+void handleClient(int client_fd, int client_id, int mode)
 {
     int replicas_synced=0;
     std::vector <std::vector<RESPToken>> commands;
@@ -827,7 +830,7 @@ void handleClient(int client_fd, int client_id)
                         continue;
                     if (take_output)
                         ++sz_outputs, outputs+=wr;
-                    else
+                    else if (mode)
                     {
                         ssize_t n=write (client_fd, wr.c_str(), wr.size());
                         if (replica_fds.find(client_fd)!=replica_fds.end())
@@ -937,14 +940,18 @@ void handleClient(int client_fd, int client_id)
         }
         if (is_replica)
             return ok;
-        if (!wr.empty())
+        if (!wr.empty() && mode)
             write (client_fd, wr.c_str(), wr.size());
         return ok;
     };
     while (true)
     {
         char buff[4096] = {0};
-        ssize_t nr_bytes = read(client_fd, &buff, sizeof(buff));
+        ssize_t nr_bytes=0;
+        if (mode==1)
+            nr_bytes = read(client_fd, &buff, sizeof(buff));
+        else
+            strncpy (buff, external_command, std::min (sizeof(buff), strlen(external_command))), nr_bytes = strlen(external_command);
         bytes_processed+=nr_bytes;
         std::vector<RESPToken> tokens = tokenize(std::string(buff));
         if (tokens.empty())
@@ -989,10 +996,15 @@ void handleClient(int client_fd, int client_id)
             replicas_synced++;
             replica_synced[client_fd]=1;
         }
+        if (!mode)
+            break;
     }
-    replica_fds.erase (client_fd);
-    close(client_fd);
-    ids.insert (client_id);
+    if (mode)
+    {
+        replica_fds.erase (client_fd);
+        close(client_fd);
+        ids.insert (client_id);
+    }
 }
 std::string readUntil (int fd, std::string final)
 {
@@ -1090,7 +1102,7 @@ int main(int argc, char** argv)
                                 std::string rdb = readUntil (master_fd, "\r\n");
                                 int sz=atoi(rdb.substr(1, rdb.size()-3).c_str());
                                 rdb+=readBytes (master_fd, sz);
-                                std::thread master_connection(handleClient, master_fd, nextId());
+                                std::thread master_connection(handleClient, master_fd, nextId(), 1);
                                 master_connection.detach();
                             }
                         }
@@ -1113,10 +1125,62 @@ int main(int argc, char** argv)
     }
     if (rdb_appendonly=="yes")
     {
-        system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
-        std::ofstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
-        std::ofstream man (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".manifest");
-        man << "file " << rdb_appendfilename << ".1.incr.aof seq 1 type i\n";
+        struct stat flags;
+        if (stat ((rdb_dir+"/"+rdb_appenddirname).c_str(), &flags)!=0)
+            std::cout << "cannot access rdb_dir/rdb_appenddirname\n";
+        if (flags.st_mode & S_IFDIR)
+        {
+            std::ifstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".manifest");
+            std::string line;
+            while (getline(f, line))
+            {
+                int ptr=0;
+                bool found=0;
+                while (ptr<line.size())
+                {
+                    std::string arg = nextWord (ptr, line, " ");
+                    if (arg=="type")
+                    {
+                        std::string type = nextWord (ptr, line, " ");
+                        if (type=="i")
+                        {
+                            found=1;
+                            break;
+                        }
+                    }
+                }
+                if (found)
+                {
+                    ptr=0;
+                    std::string name=nextWord (ptr, line, " ");
+                    name=nextWord (ptr, line, " ");
+                    FILE *f;
+                    f=fopen ((rdb_dir+"/"+rdb_appenddirname+"/"+name).c_str(), "r");
+                    char buff[4096]={0};
+                    free (external_command);
+                    external_command = (char *)malloc (sizeof(char));
+                    external_command[0]='\0';
+                    while (fread (buff, sizeof(*buff), sizeof(buff), f));
+                    {
+                        external_command = (char *)realloc (external_command, sizeof(char)*(strlen(external_command)+strlen(buff)+1));
+                        if (strlen (external_command) == 0)
+                            strncpy (external_command, buff, strlen(buff));
+                        else
+                            strncat (external_command, buff, strlen(buff));
+                        external_command[strlen(external_command)]='\0';
+                    }
+                    handleClient (1, 1, 0);
+                    break;
+                }
+            }
+        }
+        else
+        {
+            system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
+            std::ofstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
+            std::ofstream man (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".manifest");
+            man << "file " << rdb_appendfilename << ".1.incr.aof seq 1 type i\n";
+        }
     }
     if (!rdb_name.empty())
     {
@@ -1225,7 +1289,7 @@ int main(int argc, char** argv)
     {
         int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
         std::cout << "Client connected from port " << ntohs(client_addr.sin_port) << "\n";
-        std::thread client(handleClient, client_fd, nextId());
+        std::thread client(handleClient, client_fd, nextId(), 1);
         client.detach();
     }
     close(server_fd);
