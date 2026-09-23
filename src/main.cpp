@@ -840,11 +840,11 @@ void handleClient(int client_fd, int client_id)
     auto isWriteCommand = [&] (RESPToken token)
     {
         std::string command = std::any_cast<std::string>(token.value);
-        return (command=="XADD" || command=="SET" || command=="DEL" || command=="BLPOP" || command=="RPUSH" || command=="LPUSH");
+        return (command=="XADD" || command=="SET" || command=="DEL" || command=="BLPOP" || command=="RPUSH" || command=="LPUSH" || command=="INCR");
     };
     auto appendToAOF = [&] (std::string input)
     {
-        std::ofstream g (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
+        std::ofstream g (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof", std::ios_base::app);
         g << input;
     };
     auto checkModQueue = [&] (const RESPToken& token)
