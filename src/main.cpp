@@ -15,9 +15,11 @@
 #include <netdb.h>
 #include <thread>
 #include <any>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -201,10 +203,13 @@ std::string allUpper(std::string input)
     return input;
 }
 bool is_replica=0;
+std::condition_variable ack_cv;
 std::mutex db_mutex;
 std::mutex synced_mutex;
 std::mutex wait_mutex;
+std::mutex ack_mutex;
 std::mutex stream_mutex;
+std::mutex replicas_write_mutex;
 std::map<RESPToken, std::multiset<std::chrono::time_point<std::chrono::system_clock>>> pop_wait;
 std::map<RESPToken, RESPToken> variables;
 std::map<RESPToken, std::vector<std::pair<RESPToken, std::vector<std::pair<RESPToken, RESPToken>>>>> streams;
@@ -214,6 +219,7 @@ std::map<RESPToken, std::set<int>> watching_clients;
 std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
 int offset=0;
 std::string rdb_dir=std::filesystem::current_path(), rdb_name, rdb_appendonly="no", rdb_appenddirname="appendonlydir", rdb_appendfilename="appendonly.aof", rdb_appendfsync="everysec";
+std::map<int, int> replica_offset;
 enum WATCH_STATE
 {
     WATCHED,
@@ -298,9 +304,9 @@ bool containsOnlyDigits (std::string input)
 std::vector<std::set <std::pair<RESPToken, WATCH_STATE>>> watched_keys;
 std::set <int> ids;
 std::set <int> replica_fds;
-std::map <int, int> replica_bytes;
 std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
+std::atomic<long long> master_offset;
 void handleClient(int client_fd, int client_id)
 {
     int replicas_synced=0;
@@ -309,6 +315,7 @@ void handleClient(int client_fd, int client_id)
     std::function<void(const RESPToken token, bool take_output)> processCommand;
     std::string outputs="";
     int sz_outputs=0;
+    int last_command_bytes;
     bool replica_initialized=0, wr_exception=0;
     ssize_t bytes_processed=0;
     processCommand = [&](const RESPToken& token, bool take_output=0)
@@ -340,13 +347,14 @@ void handleClient(int client_fd, int client_id)
         };
         auto updateReplicaStatus = [&] ()
         {
+            std::lock_guard lock(replicas_write_mutex);
             for (auto fd : replica_fds)
             {
                 write (fd, token.RESP_string.c_str(), token.RESP_string.size());
-                replica_bytes[fd]+=token.RESP_string.size();
                 if (replica_synced[fd])
                     replica_synced[fd]=0;
             }
+            master_offset+=token.RESP_string.size();
         };
         if (token.type == RESPType::ARRAY)
         {
@@ -395,39 +403,36 @@ void handleClient(int client_fd, int client_id)
                 {
                     int nr = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+1].value).c_str());
                     int time = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
-                    std::chrono::system_clock::time_point start;
-                    replicas_synced=0;
-                    auto query = [&] (int fd)
+                    std::string wr2=makeArray (makeBulkString("REPLCONF")+makeBulkString("GETACK")+makeBulkString("*"), 3);
+                    int target=master_offset.load();
+                    if (target==0)
                     {
-                        int flags = fcntl(fd, F_GETFL, 0);
-                        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-                        std::string wr2="";
-                        wr2=makeArray (makeBulkString ("REPLCONF")+makeBulkString("GETACK")+makeBulkString("*"), 3);
-                        write (fd, wr2.c_str(), wr2.size());
-                        char buff[128]={0};
-                        while (1)
-                        {
-                            auto n=read (fd, &buff, sizeof(buff));
-                            if (n!=0)
-                                break;
-                        }
-                        replica_synced[fd]=1;
-                        replicas_synced++;
-                    };
-                    int already_synced=0;
-                    for (auto fd : replica_fds)
-                    {
-                        if (replica_synced[fd])
-                        {
-                            ++already_synced;
-                            continue;
-                        }
-                        std::thread query_replica (query, fd);
-                        query_replica.detach();
+                        wr=makeInteger(std::to_string(replica_fds.size()));
                     }
-                    start = std::chrono::system_clock::now();
-                    while (replicas_synced<nr && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count()<=time);
-                    wr=makeInteger (std::to_string(already_synced+replicas_synced));
+                    else
+                    {
+                        {
+                            std::lock_guard<std::mutex> lock(replicas_write_mutex);
+                            for (int fd : replica_fds)
+                                write (fd, wr2.c_str(), wr2.size());
+                        }
+                        master_offset+=wr2.size();
+                        auto countR = [&] ()
+                        {
+                            int finnished=0;
+                            for (auto [fd, offset] : replica_offset)
+                                if (offset>=target)
+                                {
+                                    finnished++;
+                                }
+                            return finnished;
+                        };
+                        auto deadline=std::chrono::system_clock::now()+std::chrono::milliseconds(time);
+                        std::unique_lock<std::mutex> lock(ack_mutex);
+                        ack_cv.wait_until(lock, deadline, [&] {return countR()>=nr;});
+                        lock.unlock();
+                        wr=makeInteger (std::to_string(countR()));
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PSYNC")
                 {
@@ -439,6 +444,11 @@ void handleClient(int client_fd, int client_id)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETACK")
                         wr_exception=1, wr=makeArray (makeBulkString ("REPLCONF")+makeBulkString ("ACK")+makeBulkString(std::to_string(bytes_processed-37)), 3);
+                    else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "ACK")
+                    {
+                        replica_offset[client_fd]=atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
+                        ack_cv.notify_all();
+                    }
                     else
                         wr=makeSimpleString ("OK");
 
@@ -821,7 +831,7 @@ void handleClient(int client_fd, int client_id)
                     {
                         ssize_t n=write (client_fd, wr.c_str(), wr.size());
                         if (replica_fds.find(client_fd)!=replica_fds.end())
-                            replica_bytes[client_fd]+=n;
+                            master_offset+=n, replica_offset[client_fd]+=n;
                     }
                 }
             }
@@ -913,6 +923,12 @@ void handleClient(int client_fd, int client_id)
             write (client_fd, wr.c_str(), wr.size());
         return ok;
     };
+    auto isWriteCommand = [&] (RESPToken token)
+    {
+        std::cout << 1;
+        std::string command = std::any_cast<std::string>(token.value);
+        return (command=="XADD" || command=="SET" || command=="DEL" || command=="BLPOP" || command=="RPUSH" || command=="LPUSH");
+    };
     while (true)
     {
         char buff[4096] = {0};
@@ -949,7 +965,6 @@ void handleClient(int client_fd, int client_id)
                 wr.pop_back();
                 ssize_t n=write (client_fd, wr.c_str(), wr.size());
                 replica_fds.insert (client_fd);
-                replica_bytes[client_fd]+=wr.size();
             }
             else
             {
@@ -1085,6 +1100,7 @@ int main(int argc, char** argv)
     if (rdb_appendonly=="yes")
     {
         system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
+        std::ofstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
     }
     if (!rdb_name.empty())
     {
