@@ -19,6 +19,7 @@
 #include <map>
 #include <chrono>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <fstream>
 
@@ -212,7 +213,7 @@ std::map<RESPToken, std::deque<RESPToken>> lists;
 std::map<RESPToken, std::set<int>> watching_clients;
 std::string replication_id="8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
 int offset=0;
-std::string rdb_dir, rdb_name;
+std::string rdb_dir=std::filesystem::current_path(), rdb_name, rdb_appendonly="no", rdb_appenddirname="appendonlydir", rdb_appendfilename="appendonly.aof", rdb_appendfsync="everysec";
 enum WATCH_STATE
 {
     WATCHED,
@@ -377,6 +378,14 @@ void handleClient(int client_fd, int client_id)
                         RESPToken name = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
                         if (std::any_cast<std::string>(name.value) == "dir")
                             wr=makeArray (makeBulkString ("dir")+makeBulkString(rdb_dir), 2);
+                        else if (std::any_cast<std::string>(name.value) == "appendonly")
+                            wr=makeArray (makeBulkString ("appendonly")+makeBulkString(rdb_appendonly), 2);
+                        else if (std::any_cast<std::string>(name.value) == "appenddirname")
+                            wr=makeArray (makeBulkString ("appenddirname")+makeBulkString(rdb_appenddirname), 2);
+                        else if (std::any_cast<std::string>(name.value) == "appendfilename")
+                            wr=makeArray (makeBulkString ("appendfilename")+makeBulkString(rdb_appendfilename), 2);
+                        else if (std::any_cast<std::string>(name.value) == "appendfsync")
+                            wr=makeArray (makeBulkString ("appendfsync")+makeBulkString(rdb_appendfsync), 2);
                         else
                             wr=makeArray (makeBulkString("dbfilename")+makeBulkString(rdb_name), 2);
                         i+=1;
