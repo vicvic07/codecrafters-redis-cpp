@@ -1082,6 +1082,10 @@ int main(int argc, char** argv)
             }
         }
     }
+    if (rdb_appendonly=="yes")
+    {
+        system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
+    }
     if (!rdb_name.empty())
     {
         FILE *f;
