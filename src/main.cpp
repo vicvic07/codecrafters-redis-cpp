@@ -837,6 +837,16 @@ void handleClient(int client_fd, int client_id)
             }
         }
     };
+    auto isWriteCommand = [&] (RESPToken token)
+    {
+        std::string command = std::any_cast<std::string>(token.value);
+        return (command=="XADD" || command=="SET" || command=="DEL" || command=="BLPOP" || command=="RPUSH" || command=="LPUSH");
+    };
+    auto appendToAOF = [&] (std::string input)
+    {
+        std::ofstream g (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
+        g << input;
+    };
     auto checkModQueue = [&] (const RESPToken& token)
     {
         auto clearWatchlist = [&] ()
@@ -869,6 +879,14 @@ void handleClient(int client_fd, int client_id)
                 {
                     for (const auto& tokens : commands)
                     {
+                        if (isWriteCommand (std::any_cast<std::vector<RESPToken>>(tokens[0].value)[0]))
+                        {
+                            std::string wr="";
+                            for (const auto& token : tokens)
+                                wr+=token.RESP_string;
+                            wr=makeArray(wr, tokens.size());
+                            appendToAOF(wr);
+                        }
                         for (const auto& token : tokens)
                             processCommand(token, 1);
                     }
@@ -923,12 +941,6 @@ void handleClient(int client_fd, int client_id)
             write (client_fd, wr.c_str(), wr.size());
         return ok;
     };
-    auto isWriteCommand = [&] (RESPToken token)
-    {
-        std::cout << 1;
-        std::string command = std::any_cast<std::string>(token.value);
-        return (command=="XADD" || command=="SET" || command=="DEL" || command=="BLPOP" || command=="RPUSH" || command=="LPUSH");
-    };
     while (true)
     {
         char buff[4096] = {0};
@@ -946,6 +958,8 @@ void handleClient(int client_fd, int client_id)
         }
         else
         {
+            if (isWriteCommand (std::any_cast<std::vector<RESPToken>>(tokens[0].value)[0]))
+                appendToAOF(buff);
             for (const auto& token : tokens)
             {
                 processCommand(token, 0);
@@ -1102,7 +1116,7 @@ int main(int argc, char** argv)
         system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
         std::ofstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
         std::ofstream man (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".manifest");
-        man << "file " << rdb_appendfilename << ".1.incr.aof seq 1 type i";
+        man << "file " << rdb_appendfilename << ".1.incr.aof seq 1 type i\n";
     }
     if (!rdb_name.empty())
     {
