@@ -1101,6 +1101,8 @@ int main(int argc, char** argv)
     {
         system (("mkdir "+rdb_dir+"/"+rdb_appenddirname).c_str());
         std::ofstream f (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".1.incr.aof");
+        std::ofstream man (rdb_dir+"/"+rdb_appenddirname+"/"+rdb_appendfilename+".manifest");
+        man << "file " << rdb_appendfilename << ".1.incr.aof seq 1 type i";
     }
     if (!rdb_name.empty())
     {
