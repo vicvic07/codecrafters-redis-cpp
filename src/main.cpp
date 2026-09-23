@@ -1071,6 +1071,14 @@ int main(int argc, char** argv)
                     rdb_dir = argv[i+1];
                 else if (flag=="dbfilename")
                     rdb_name = argv[i+1];
+                else if (flag=="appendonly")
+                    rdb_appendonly = argv[i+1];
+                else if (flag=="appenddirname")
+                    rdb_appenddirname = argv[i+1];
+                else if (flag=="appendfilename")
+                    rdb_appendfilename = argv[i+1];
+                else if (flag=="appendfsync")
+                    rdb_appendfsync = argv[i+1];
             }
         }
     }
