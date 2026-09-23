@@ -313,7 +313,7 @@ std::atomic<long long> master_offset;
 void handleClient(int client_fd, int client_id, int mode)
 {
     int replicas_synced=0;
-    std::vector<RESPToken> subscriptions;
+    std::set<RESPToken> subscriptions;
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
@@ -375,7 +375,7 @@ void handleClient(int client_fd, int client_id, int mode)
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SUBSCRIBE")
                 {
                     RESPToken channel = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                    subscriptions.push_back(channel);
+                    subscriptions.insert(channel);
                     wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(channel.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "KEYS")
