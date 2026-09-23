@@ -127,7 +127,7 @@ std::vector<RESPToken> tokenize(std::string input)
         for (int i = 1; i <= sz; i++)
         {
             if (ptr>input.size())
-                std::cout << "End my shitty ass life now! " << input << "\n";
+                std::cout << "I am sorry for what was said before in this line (highly unprofessional). Anyway the RESP parsing goes out of bounds on the input string at some point, here is the input string: " << input << "\n";
             bytes.append(input, ptr++, 1);
         }
         ptr += 2;
@@ -313,6 +313,7 @@ std::atomic<long long> master_offset;
 void handleClient(int client_fd, int client_id, int mode)
 {
     int replicas_synced=0;
+    std::vector<RESPToken> subscriptions;
     std::vector <std::vector<RESPToken>> commands;
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
@@ -370,6 +371,12 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SUBSCRIBE")
+                {
+                    RESPToken channel = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    subscriptions.push_back(channel);
+                    wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(channel.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "KEYS")
                 {
@@ -946,12 +953,23 @@ void handleClient(int client_fd, int client_id, int mode)
     };
     while (true)
     {
-        char buff[4096] = {0};
+        char *buff;
+        buff = (char *)malloc(sizeof(char));
+        buff[0]='\0';
         ssize_t nr_bytes=0;
         if (mode==1)
-            nr_bytes = read(client_fd, &buff, sizeof(buff));
+        {
+            buff = (char *)realloc(buff, sizeof(char)*4096);
+            memset (buff, 0, sizeof(char)*4096);
+            nr_bytes = read(client_fd, buff, sizeof(char)*4096);
+        }
         else
-            strncpy (buff, external_command, std::min (sizeof(buff), strlen(external_command))), nr_bytes = strlen(external_command);
+        {
+            buff = (char *)realloc(buff, sizeof(char)*(strlen(external_command)+1));
+            strncpy (buff, external_command, strlen(external_command));
+            buff[strlen(buff)]='\0';
+            nr_bytes = strlen(external_command);
+        }
         bytes_processed+=nr_bytes;
         std::vector<RESPToken> tokens = tokenize(std::string(buff));
         if (tokens.empty())
@@ -996,6 +1014,7 @@ void handleClient(int client_fd, int client_id, int mode)
             replicas_synced++;
             replica_synced[client_fd]=1;
         }
+        free (buff);
         if (!mode)
             break;
     }
@@ -1170,6 +1189,7 @@ int main(int argc, char** argv)
                         external_command[strlen(external_command)]='\0';
                     }
                     handleClient (1, 1, 0);
+                    free (external_command);
                     break;
                 }
             }
@@ -1221,7 +1241,6 @@ int main(int argc, char** argv)
                         if (time!=-1)
                         {
                             auto time_point=std::chrono::system_clock::now();
-                            std::cout << time << " " << std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count() << "\n";
                             if (time>=std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count())
                             {
                                 variables[{RESPType::BULK_STRING, name, makeBulkString(name)}]={RESPType::BULK_STRING, value, makeBulkString(value)};
