@@ -311,6 +311,7 @@ std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
+std::map <RESPToken, int> channel;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -402,12 +403,18 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PUBLISH")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    wr = makeInteger(std::to_string(channel[arg]));
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SUBSCRIBE")
                 {
-                    RESPToken channel = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
-                    subscriptions.insert(channel);
+                    RESPToken ch = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
+                    subscriptions.insert(ch);
+                    channel[ch]++;
                     is_subscribed=1;
-                    wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(channel.value))+makeInteger(std::to_string(subscriptions.size())), 3);
+                    wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(ch.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "KEYS")
                 {
