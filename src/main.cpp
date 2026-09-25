@@ -842,7 +842,10 @@ void handleClient(int client_fd, int client_id, int mode)
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PING")
                 {
-                    wr=makeSimpleString("PONG");
+                    if (is_subscribed)
+                        wr=makeArray(makeBulkString("pong")+makeBulkString(""), 2);
+                    else
+                        wr=makeSimpleString("PONG");
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GET")
                 {
