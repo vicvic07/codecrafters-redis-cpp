@@ -311,7 +311,7 @@ std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
-std::map <RESPToken, int> channel;
+std::map <RESPToken, std::vector<int>> channel;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -406,13 +406,17 @@ void handleClient(int client_fd, int client_id, int mode)
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PUBLISH")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
-                    wr = makeInteger(std::to_string(channel[arg]));
+                    RESPToken msg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    wr = makeInteger(std::to_string(channel[arg].size()));
+                    std::string wr2 = makeArray (makeBulkString("message")+makeBulkString(std::any_cast<std::string>(arg.value))+makeBulkString(std::any_cast<std::string>(msg.value)), 3);
+                    for (const int& fd : channel[arg])
+                        write (fd, wr2.c_str(), wr2.size());
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SUBSCRIBE")
                 {
                     RESPToken ch = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     subscriptions.insert(ch);
-                    channel[ch]++;
+                    channel[ch].push_back(client_fd);
                     is_subscribed=1;
                     wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(ch.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
