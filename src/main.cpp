@@ -313,6 +313,7 @@ std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
 std::map <RESPToken, std::set<int>> channel;
 std::map <RESPToken, std::set<std::pair<RESPToken, RESPToken>>> sorted_sets;
+std::map <RESPToken, std::map<RESPToken, RESPToken>> sorted_sets_only_members;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -408,8 +409,19 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     RESPToken score = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
-                    sorted_sets[arg].insert({score, member});
-                    wr = makeInteger(std::to_string(sorted_sets[arg].size()));
+                    if (sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
+                    {
+                        wr = makeInteger ("0");
+                        sorted_sets[arg].erase ({sorted_sets_only_members[arg][member], member});
+                        sorted_sets[arg].insert ({score, member});
+                        sorted_sets_only_members[arg][member]=score;
+                    }
+                    else
+                    {
+                        sorted_sets[arg].insert({score, member});
+                        sorted_sets_only_members[arg][member]=score;
+                        wr = makeInteger("1");
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "PUBLISH")
                 {
