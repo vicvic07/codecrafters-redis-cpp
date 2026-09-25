@@ -310,8 +310,10 @@ std::set <int> replica_fds;
 std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
+std::set <std::string> subscribed_allowed;
 void handleClient(int client_fd, int client_id, int mode)
 {
+    bool is_subscribed=0;
     int replicas_synced=0;
     std::set<RESPToken> subscriptions;
     std::vector <std::vector<RESPToken>> commands;
@@ -324,6 +326,34 @@ void handleClient(int client_fd, int client_id, int mode)
     ssize_t bytes_processed=0;
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
+        if (is_subscribed && token.type==RESPType::ARRAY)
+        {
+            std::cout << "0\n";
+            RESPToken element = std::any_cast<std::vector<RESPToken>>(token.value)[0];
+            std::cout << "1\n";
+            if (element.type == RESPType::BULK_STRING)
+            {
+                std::string command = allUpper(std::any_cast<std::string>(element.value));
+                if (subscribed_allowed.find(command) == subscribed_allowed.end())
+                {
+                    std::string wr = makeSimpleError ("ERR Can't execute '"+command+"': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\n");
+                    if (!wr.empty())
+                    {
+                        if (is_replica && !wr_exception)
+                            return;
+                        if (take_output)
+                            ++sz_outputs, outputs+=wr;
+                        else if (mode)
+                        {
+                            ssize_t n=write (client_fd, wr.c_str(), wr.size());
+                            if (replica_fds.find(client_fd)!=replica_fds.end())
+                                master_offset+=n, replica_offset[client_fd]+=n;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
         auto tokenToId = [&] (RESPToken input)
         {
             int ptr=0;
@@ -376,6 +406,7 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken channel = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     subscriptions.insert(channel);
+                    is_subscribed=1;
                     wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(channel.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "KEYS")
@@ -1273,6 +1304,11 @@ int main(int argc, char** argv)
             }
         }
     }
+    subscribed_allowed.insert ("SUBSCRIBE");
+    subscribed_allowed.insert ("PSUBSCRIBE");
+    subscribed_allowed.insert ("UNSUBSCRIBE");
+    subscribed_allowed.insert ("PING");
+    subscribed_allowed.insert ("QUIT");
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
