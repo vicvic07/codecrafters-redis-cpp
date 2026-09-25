@@ -311,7 +311,7 @@ std::map <int, int> replica_ports;
 std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
-std::map <RESPToken, std::vector<int>> channel;
+std::map <RESPToken, std::set<int>> channel;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -329,9 +329,7 @@ void handleClient(int client_fd, int client_id, int mode)
     {
         if (is_subscribed && token.type==RESPType::ARRAY)
         {
-            std::cout << "0\n";
             RESPToken element = std::any_cast<std::vector<RESPToken>>(token.value)[0];
-            std::cout << "1\n";
             if (element.type == RESPType::BULK_STRING)
             {
                 std::string command = allUpper(std::any_cast<std::string>(element.value));
@@ -412,11 +410,19 @@ void handleClient(int client_fd, int client_id, int mode)
                     for (const int& fd : channel[arg])
                         write (fd, wr2.c_str(), wr2.size());
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "UNSUBSCRIBE")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    subscriptions.erase (arg);
+                    channel[arg].erase (client_fd);
+                    is_subscribed = !subscriptions.empty();
+                    wr = makeArray (makeBulkString("unsubscribe")+makeBulkString(std::any_cast<std::string>(arg.value))+makeInteger(std::to_string(subscriptions.size())), 3);
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SUBSCRIBE")
                 {
                     RESPToken ch = std::any_cast<std::vector<RESPToken>>(token.value)[i+1];
                     subscriptions.insert(ch);
-                    channel[ch].push_back(client_fd);
+                    channel[ch].insert(client_fd);
                     is_subscribed=1;
                     wr=makeArray (makeBulkString ("subscribe")+makeBulkString(std::any_cast<std::string>(ch.value))+makeInteger(std::to_string(subscriptions.size())), 3);
                 }
