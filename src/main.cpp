@@ -11,6 +11,8 @@
 #include <iomanip>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <ext/pb_ds/assoc_container.hpp>
+#include <ext/pb_ds/tree_policy.hpp>
 #include <cassert>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -26,7 +28,7 @@
 #include <filesystem>
 #include <mutex>
 #include <fstream>
-
+using namespace __gnu_pbds;
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -61,10 +63,11 @@ struct RESPToken
     bool operator <(const RESPToken& a) const
     {
         if (a.type != this->type) return this->type < a.type;
+        if (this -> type == RESPType::BULK_STRING)
+            return std::any_cast<std::string>(this -> value)<std::any_cast<std::string>(a.value);
         return this->RESP_string < a.RESP_string;
     }
 };
-
 std::string nextWord(int& ptr, std::string input, const char* sep)
 {
     std::string ret = "";
@@ -312,8 +315,9 @@ std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
 std::map <RESPToken, std::set<int>> channel;
-std::map <RESPToken, std::set<std::pair<RESPToken, RESPToken>>> sorted_sets;
-std::map <RESPToken, std::map<RESPToken, RESPToken>> sorted_sets_only_members;
+typedef tree<std::pair<double, RESPToken>, null_type, std::less<std::pair<double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
+std::map <RESPToken, ordered_set> sorted_sets;
+std::map <RESPToken, std::map<RESPToken, double>> sorted_sets_only_members;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -403,11 +407,21 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZRANK")
+                {
+                    wr_exception=1;
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    if (sorted_sets.find(arg)!=sorted_sets.end() && sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
+                        wr=makeInteger (std::to_string(sorted_sets[arg].order_of_key(std::make_pair(sorted_sets_only_members[arg][member], member))));
+                    else
+                        wr="$-1\r\n";
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZADD")
                 {
                     updateReplicaStatus();
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
-                    RESPToken score = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    double score = atof(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
                     if (sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
                     {
