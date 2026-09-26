@@ -315,9 +315,9 @@ std::map <int, bool> replica_synced;
 std::atomic<long long> master_offset;
 std::set <std::string> subscribed_allowed;
 std::map <RESPToken, std::set<int>> channel;
-typedef tree<std::pair<double, RESPToken>, null_type, std::less<std::pair<double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
+typedef tree<std::pair<long double, RESPToken>, null_type, std::less<std::pair<long double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
 std::map <RESPToken, ordered_set> sorted_sets;
-std::map <RESPToken, std::map<RESPToken, double>> sorted_sets_only_members;
+std::map <RESPToken, std::map<RESPToken, long double>> sorted_sets_only_members;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -407,6 +407,19 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZSCORE")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    if (sorted_sets.find(arg)!=sorted_sets.end() && sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
+                    {
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision (12) << sorted_sets_only_members[arg][member];
+                        wr=makeBulkString(oss.str());
+                    }
+                    else
+                        wr="$-1\r\n";
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZCARD")
                 {
                     wr_exception=1;
@@ -456,7 +469,7 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     updateReplicaStatus();
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
-                    double score = atof(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
+                    long double score = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str(), 0);
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
                     if (sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
                     {
