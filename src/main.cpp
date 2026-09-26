@@ -407,6 +407,15 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZCARD")
+                {
+                    wr_exception=1;
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (sorted_sets.find(arg)!=sorted_sets.end())
+                        wr=makeInteger(std::to_string(sorted_sets[arg].size()));
+                    else
+                        wr=makeInteger("0");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZRANGE")
                 {
                     wr_exception=1;
