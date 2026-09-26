@@ -318,6 +318,7 @@ std::map <RESPToken, std::set<int>> channel;
 typedef tree<std::pair<long double, RESPToken>, null_type, std::less<std::pair<long double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
 std::map <RESPToken, ordered_set> sorted_sets;
 std::map <RESPToken, std::map<RESPToken, long double>> sorted_sets_only_members;
+long double longitude_limit=180, latitude_limit=85.05112878;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -395,6 +396,10 @@ void handleClient(int client_fd, int client_id, int mode)
             }
             master_offset+=token.RESP_string.size();
         };
+        auto validCoordinates = [&] (long double longitude, long double latitude)
+        {
+            return (longitude<=longitude_limit && longitude>=-longitude_limit && latitude<=latitude_limit && latitude>=-latitude_limit);
+        };
         if (token.type == RESPType::ARRAY)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -413,7 +418,10 @@ void handleClient(int client_fd, int client_id, int mode)
                     long double longitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str(), nullptr);
                     long double latitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str(), nullptr);
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
-                    wr = makeInteger ("1");
+                    if (validCoordinates (longitude, latitude))
+                        wr = makeInteger ("1");
+                    else
+                        wr = makeSimpleError ("ERR invalid longitude,latitude pair "+std::to_string(longitude)+","+std::to_string(latitude));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZREM")
                 {
