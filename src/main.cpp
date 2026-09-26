@@ -407,6 +407,28 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZRANGE")
+                {
+                    wr_exception=1;
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    int begin = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
+                    int end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
+                    if (sorted_sets.find(arg)!=sorted_sets.end())
+                    {
+                        auto itr = sorted_sets[arg].begin(), itr2 = sorted_sets[arg].begin();
+                        end++;
+                        int cnt=0;
+                        while (begin-- && itr!=sorted_sets[arg].end())
+                            ++itr;
+                        while (end-- && itr2!=sorted_sets[arg].end())
+                            ++itr2;
+                        for (;itr!=itr2;++itr)
+                            ++cnt, wr+=(*itr).second.RESP_string;
+                        wr=makeArray (wr, cnt);
+                    }
+                    else
+                        wr=makeArray ("", 0);
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZRANK")
                 {
                     wr_exception=1;
