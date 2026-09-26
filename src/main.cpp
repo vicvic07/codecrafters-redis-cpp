@@ -407,6 +407,14 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOADD")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    long double longitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str(), nullptr);
+                    long double latitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str(), nullptr);
+                    RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
+                    wr = makeInteger ("1");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ZREM")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
@@ -482,7 +490,7 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     updateReplicaStatus();
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
-                    long double score = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str(), 0);
+                    long double score = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str(), nullptr);
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
                     if (sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
                     {
