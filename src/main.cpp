@@ -415,6 +415,10 @@ void handleClient(int client_fd, int client_id, int mode)
                     int end = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
                     if (sorted_sets.find(arg)!=sorted_sets.end())
                     {
+                        if (begin<0)
+                            begin=std::max (0, (int)sorted_sets[arg].size()+begin);
+                        if (end<0)
+                            end=std::max (0, (int)sorted_sets[arg].size()+end);
                         auto itr = sorted_sets[arg].begin(), itr2 = sorted_sets[arg].begin();
                         end++;
                         int cnt=0;
