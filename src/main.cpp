@@ -400,6 +400,25 @@ void handleClient(int client_fd, int client_id, int mode)
         {
             return (longitude<=longitude_limit && longitude>=-longitude_limit && latitude<=latitude_limit && latitude>=-latitude_limit);
         };
+        auto spreadIntToLongLong = [&] (unsigned int x)
+        {
+            uint64_t v=x;
+            v = v & 0xFFFFFFFF;
+            v = (v | (v << 16)) & 0x0000FFFF0000FFFF;
+            v = (v | (v << 8)) & 0x00FF00FF00FF00FF;
+            v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0F;
+            v = (v | (v << 2)) & 0x3333333333333333;
+            v = (v | (v << 1)) & 0x5555555555555555;
+            return v;
+        };
+        auto interleave = [&] (long double longitude, long double latitude)
+        {
+            unsigned int normalized_longitude = 1.0*(1 << 26)*(longitude+longitude_limit)/(2.0*longitude_limit);
+            unsigned int normalized_latitude = 1.0*(1 << 26)*(latitude+latitude_limit)/(2.0*latitude_limit);
+            unsigned long long int x=spreadIntToLongLong(normalized_longitude) << 1;
+            unsigned long long int y=spreadIntToLongLong(normalized_latitude);
+            return x | y;
+        };
         if (token.type == RESPType::ARRAY)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -420,7 +439,7 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
                     if (validCoordinates (longitude, latitude))
                     {
-                        long double score = 0;
+                        long double score = interleave (longitude, latitude);
                         sorted_sets[arg].insert ({score, member});
                         sorted_sets_only_members[arg][member]=score;
                         wr = makeInteger ("1");
