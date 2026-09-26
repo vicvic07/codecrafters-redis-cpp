@@ -419,7 +419,12 @@ void handleClient(int client_fd, int client_id, int mode)
                     long double latitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str(), nullptr);
                     RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[i+4];
                     if (validCoordinates (longitude, latitude))
+                    {
+                        long double score = 0;
+                        sorted_sets[arg].insert ({score, member});
+                        sorted_sets_only_members[arg][member]=score;
                         wr = makeInteger ("1");
+                    }
                     else
                         wr = makeSimpleError ("ERR invalid longitude,latitude pair "+std::to_string(longitude)+","+std::to_string(latitude));
                 }
