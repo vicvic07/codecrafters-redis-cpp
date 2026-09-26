@@ -431,6 +431,21 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOPOS")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    std::string wr2="";
+                    int cnt=0;
+                    for (int j=i+2;j<std::any_cast<std::vector<RESPToken>>(token.value).size();j++, cnt++)
+                    {
+                        RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[j];
+                        if (sorted_sets.find(arg)!=sorted_sets.end() && sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
+                            wr2 += makeArray (makeBulkString("0")+makeBulkString("0"), 2);
+                        else
+                            wr2 += "*-1\r\n";
+                    }
+                    wr=makeArray (wr2, cnt);
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOADD")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
