@@ -402,14 +402,24 @@ void handleClient(int client_fd, int client_id, int mode)
         };
         auto spreadIntToLongLong = [&] (unsigned int x)
         {
-            uint64_t v=x;
-            v = v & 0xFFFFFFFF;
-            v = (v | (v << 16)) & 0x0000FFFF0000FFFF;
-            v = (v | (v << 8)) & 0x00FF00FF00FF00FF;
-            v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0F;
-            v = (v | (v << 2)) & 0x3333333333333333;
-            v = (v | (v << 1)) & 0x5555555555555555;
+            unsigned long long v=x;
+            v = v & 0xFFFFFFFFULL;
+            v = (v | (v << 16)) & 0x0000FFFF0000FFFFULL;
+            v = (v | (v << 8)) & 0x00FF00FF00FF00FFULL;
+            v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0FULL;
+            v = (v | (v << 2)) & 0x3333333333333333ULL;
+            v = (v | (v << 1)) & 0x5555555555555555ULL;
             return v;
+        };
+        auto compactLongLongToInt = [&] (unsigned long long x)
+        {
+            x = x & 0x5555555555555555ULL;
+            x = (x | (x >> 1)) & 0x3333333333333333ULL;
+            x = (x | (x >> 2)) & 0x0F0F0F0F0F0F0F0FULL;
+            x = (x | (x >> 4)) & 0x00FF00FF00FF00FFULL;
+            x = (x | (x >> 8)) & 0x0000FFFF0000FFFFULL;
+            x = (x | (x >> 16)) & 0x00000000FFFFFFFFULL;
+            return static_cast<unsigned int>(x);
         };
         auto interleave = [&] (long double longitude, long double latitude)
         {
@@ -418,6 +428,22 @@ void handleClient(int client_fd, int client_id, int mode)
             unsigned long long int x=spreadIntToLongLong(normalized_longitude) << 1;
             unsigned long long int y=spreadIntToLongLong(normalized_latitude);
             return x | y;
+        };
+        auto gridNumberToCoord = [&] (unsigned int latitude, unsigned int longitude)
+        {
+            long double grid_lat_min = -latitude_limit+2*latitude_limit*(latitude/pow(2, 26));
+            long double grid_lat_max = -latitude_limit+2*latitude_limit*((latitude+1)/pow(2, 26));
+            long double grid_long_min = -longitude_limit+2*longitude_limit*(longitude/pow(2, 26));
+            long double grid_long_max = -longitude_limit+2*longitude_limit*((longitude+1)/pow(2, 26));
+            return std::make_pair ((grid_long_min+grid_long_max)/2, (grid_lat_min+grid_lat_max)/2);
+        };
+        auto decodeScore = [&] (unsigned long long score)
+        {
+            unsigned long long y = score >> 1;
+            unsigned long long x = score;
+            unsigned int grid_lat_number = compactLongLongToInt(x);
+            unsigned int grid_long_number = compactLongLongToInt(y);
+            return gridNumberToCoord(grid_lat_number, grid_long_number);
         };
         if (token.type == RESPType::ARRAY)
         {
@@ -440,7 +466,13 @@ void handleClient(int client_fd, int client_id, int mode)
                     {
                         RESPToken member = std::any_cast<std::vector<RESPToken>>(token.value)[j];
                         if (sorted_sets.find(arg)!=sorted_sets.end() && sorted_sets_only_members[arg].find(member)!=sorted_sets_only_members[arg].end())
-                            wr2 += makeArray (makeBulkString("0")+makeBulkString("0"), 2);
+                        {
+                            std::ostringstream oss[2];
+                            auto coord=decodeScore(sorted_sets_only_members[arg][member]);
+                            oss[0] << std::fixed << std::setprecision (12) << coord.first;
+                            oss[1] << std::fixed << std::setprecision (12) << coord.second;
+                            wr2 += makeArray (makeBulkString(oss[0].str())+makeBulkString(oss[1].str()), 2);
+                        }
                         else
                             wr2 += "*-1\r\n";
                     }
