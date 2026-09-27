@@ -480,6 +480,8 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "WHOAMI")
                         wr=makeBulkString (username);
+                    else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETUSER")
+                        wr=makeArray (makeBulkString("flags")+makeArray("", 0), 2);
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOSEARCH")
                 {
