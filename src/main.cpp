@@ -29,6 +29,8 @@
 #include <mutex>
 #include <fstream>
 using namespace __gnu_pbds;
+#define _USE_MATH_DEFINES
+const long double EARTH_RADIUS_METERS = 6372797.560856;
 enum class RESPType
 {
     SIMPLE_STRING,
@@ -319,6 +321,10 @@ typedef tree<std::pair<long double, RESPToken>, null_type, std::less<std::pair<l
 std::map <RESPToken, ordered_set> sorted_sets;
 std::map <RESPToken, std::map<RESPToken, long double>> sorted_sets_only_members;
 long double longitude_limit=180, latitude_limit=85.05112878;
+long double degreeToRadian (long double angle)
+{
+    return angle*M_PI/180.0;
+}
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -445,6 +451,17 @@ void handleClient(int client_fd, int client_id, int mode)
             unsigned int grid_long_number = compactLongLongToInt(y);
             return gridNumberToCoord(grid_lat_number, grid_long_number);
         };
+        auto haversineDistance = [&] (std::pair <long double, long double> x, std::pair <long double, long double> y)
+        {
+            long double latRad1 = degreeToRadian(x.second);
+            long double latRad2 = degreeToRadian(y.second);
+            long double longRad1 = degreeToRadian(x.first);
+            long double longRad2 = degreeToRadian(y.first);
+            double diffLa = latRad2 - latRad1;
+            double diffLo = longRad2 - longRad1;
+            double computation = asin(sqrt(sin(diffLa/2)*sin(diffLa/2)+cos(latRad1)*cos(latRad2)*sin(diffLo/2)*sin(diffLo/2)));
+            return 2*computation*EARTH_RADIUS_METERS;
+        };
         if (token.type == RESPType::ARRAY)
         {
             for (int i = 0; i < std::any_cast<std::vector<RESPToken>>(token.value).size(); i++)
@@ -456,6 +473,22 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
+                }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEODIST")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    RESPToken member1 = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                    RESPToken member2 = std::any_cast<std::vector<RESPToken>>(token.value)[i + 3];
+                    if (sorted_sets.find(arg)!=sorted_sets.end() && sorted_sets_only_members[arg].find(member1)!=sorted_sets_only_members[arg].end() && sorted_sets_only_members[arg].find(member2)!=sorted_sets_only_members[arg].end())
+                    {
+                        auto coord1 = decodeScore(sorted_sets_only_members[arg][member1]);
+                        auto coord2 = decodeScore(sorted_sets_only_members[arg][member2]);
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision(12) << std::to_string(haversineDistance(coord1, coord2));
+                        wr=makeBulkString(oss.str());
+                    }
+                    else
+                        wr="$-1\r\n";
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOPOS")
                 {
