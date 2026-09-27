@@ -487,7 +487,7 @@ void handleClient(int client_fd, int client_id, int mode)
                         for (int i=0;i<user_flags.size();i++)
                             wr+=makeBulkString(user_flags[i]);
                         wr=makeArray(wr, (int)user_flags.size());
-                        wr=makeArray(makeBulkString("flags")+wr, 2);
+                        wr=makeArray(makeBulkString("flags")+wr+makeBulkString("passwords")+makeArray("", 0), 4);
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOSEARCH")
