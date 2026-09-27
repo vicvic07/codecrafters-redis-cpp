@@ -339,6 +339,8 @@ void handleClient(int client_fd, int client_id, int mode)
     bool replica_initialized=0, wr_exception=0;
     ssize_t bytes_processed=0;
     std::string username="default";
+    std::vector<std::string> user_flags;
+    user_flags.push_back ("nopass");
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         if (is_subscribed && token.type==RESPType::ARRAY)
@@ -481,7 +483,12 @@ void handleClient(int client_fd, int client_id, int mode)
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "WHOAMI")
                         wr=makeBulkString (username);
                     else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETUSER")
-                        wr=makeArray (makeBulkString("flags")+makeArray("", 0), 2);
+                    {
+                        for (int i=0;i<user_flags.size();i++)
+                            wr+=makeBulkString(user_flags[i]);
+                        wr=makeArray(wr, (int)user_flags.size());
+                        wr=makeArray(makeBulkString("flags")+wr, 2);
+                    }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOSEARCH")
                 {
