@@ -474,6 +474,27 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOSEARCH")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    long double longitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str(), nullptr);
+                    long double latitude = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+4].value).c_str(), nullptr);
+                    long double dist = strtold(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+6].value).c_str(), nullptr);
+                    int cnt=0;
+                    if (sorted_sets.find(arg)!=sorted_sets.end())
+                    {
+                        for (const auto &[score, member] : sorted_sets[arg])
+                        {
+                            auto coord1 = std::make_pair (longitude, latitude);
+                            auto coord2 = decodeScore(score);
+                            if (haversineDistance(coord1, coord2)<=dist)
+                                wr+=member.RESP_string, ++cnt;
+                        }
+                        wr=makeArray (wr, cnt);
+                    }
+                    else
+                        wr="*-1\r\n";
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEODIST")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
