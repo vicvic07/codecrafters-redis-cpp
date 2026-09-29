@@ -322,6 +322,7 @@ std::map <RESPToken, std::set<int>> channel;
 typedef tree<std::pair<long double, RESPToken>, null_type, std::less<std::pair<long double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
 std::map <RESPToken, ordered_set> sorted_sets;
 std::map <RESPToken, std::map<RESPToken, long double>> sorted_sets_only_members;
+std::map<RESPToken, std::string> bitmaps;
 long double longitude_limit=180, latitude_limit=85.05112878;
 long double degreeToRadian (long double angle)
 {
@@ -485,6 +486,21 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SETBIT")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    int pos = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
+                    int bit_value = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 3].value).c_str());
+                    int index = pos/16;
+                    int bit = pos%16;
+                    if (index>=bitmaps[arg].size())
+                        bitmaps[arg].resize(index+1);
+                    wr=makeInteger (std::to_string(!!(bitmaps[arg][index] & (1 << bit))));
+                    if (bit_value)
+                        bitmaps[arg][index] |= (1 << bit);
+                    else
+                        bitmaps[arg][index] &= ~(1 << bit);
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "AUTH")
                 {
                     std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 1].value);
@@ -495,7 +511,6 @@ void handleClient(int client_fd, int client_id, int mode)
                         unsigned char hash[SHA256_DIGEST_LENGTH];
                         SHA256(reinterpret_cast<const unsigned char*>(pass.c_str()), pass.length(), hash);
                         std::string pass_hash(reinterpret_cast<const char*>(hash), SHA256_DIGEST_LENGTH);
-                        std::cout << pass_hash << "\n";
                         if (users[user].passwords.find(pass_hash)!=users[user].passwords.end())
                         {
                             wr=makeSimpleString("OK");
