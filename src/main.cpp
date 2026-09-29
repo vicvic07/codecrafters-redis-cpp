@@ -342,7 +342,9 @@ void handleClient(int client_fd, int client_id, int mode)
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
     std::string outputs="";
-    std::string current_user="default";
+    std::string current_user="";
+    if (users["default"].flags.find("nopass")!=users["default"].flags.end())
+        current_user="default";
     int sz_outputs=0;
     int last_command_bytes;
     bool replica_initialized=0, wr_exception=0;
@@ -487,7 +489,7 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 1].value);
                     std::string pass = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value);
-                    std::string login_err="-WRONGPASS invalid username-password pair or user is disabled.\r\n";
+                    std::string login_err=makeSimpleError("WRONGPASS invalid username-password pair or user is disabled.");
                     if (users.find(user)!=users.end())
                     {
                         unsigned char hash[SHA256_DIGEST_LENGTH];
@@ -506,7 +508,12 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "WHOAMI")
-                        wr=makeBulkString (current_user);
+                    {
+                        if (current_user.empty())
+                            wr=makeSimpleError("NOAUTH Authentication required.");
+                        else
+                            wr=makeBulkString (current_user);
+                    }
                     else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETUSER")
                     {
                         std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value);
