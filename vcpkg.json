@@ -1,6 +1,6 @@
 {
-  "dependencies": [
-    "asio",
-    "pthreads"
-  ]
+  "dependencies" : [ "pthreads", {
+    "name" : "asio",
+    "version>=" : "1.32.0"
+  } ]
 }

@@ -8,11 +8,13 @@
 #include <sys/types.h>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <iomanip>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <ext/pb_ds/assoc_container.hpp>
 #include <ext/pb_ds/tree_policy.hpp>
+#include <openssl/sha.h>
 #include <cassert>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -325,6 +327,12 @@ long double degreeToRadian (long double angle)
 {
     return angle*M_PI/180.0;
 }
+struct usr
+{
+    std::string username;
+    std::set<std::string> flags, passwords;
+};
+std::map <std::string, usr> users;
 void handleClient(int client_fd, int client_id, int mode)
 {
     bool is_subscribed=0;
@@ -334,13 +342,11 @@ void handleClient(int client_fd, int client_id, int mode)
     bool queued=0;
     std::function<void(const RESPToken token, bool take_output)> processCommand;
     std::string outputs="";
+    std::string current_user="default";
     int sz_outputs=0;
     int last_command_bytes;
     bool replica_initialized=0, wr_exception=0;
     ssize_t bytes_processed=0;
-    std::string username="default";
-    std::vector<std::string> user_flags;
-    user_flags.push_back ("nopass");
     processCommand = [&](const RESPToken& token, bool take_output=0)
     {
         if (is_subscribed && token.type==RESPType::ARRAY)
@@ -481,13 +487,45 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "WHOAMI")
-                        wr=makeBulkString (username);
+                        wr=makeBulkString (current_user);
                     else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "GETUSER")
                     {
-                        for (int i=0;i<user_flags.size();i++)
-                            wr+=makeBulkString(user_flags[i]);
-                        wr=makeArray(wr, (int)user_flags.size());
-                        wr=makeArray(makeBulkString("flags")+wr+makeBulkString("passwords")+makeArray("", 0), 4);
+                        std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value);
+                        std::string wr_flags="", wr_pass="";
+                        for (const auto& flag : users[user].flags)
+                            wr_flags+=makeBulkString(flag);
+                        for (const auto& pass : users[user].passwords)
+                        {
+                            std::string bytes="";
+                            std::stringstream oss;
+                            for (const unsigned char& ch : pass)
+                                oss << std::hex << std::setw(2) << std::setfill('0') << (int)ch;
+                            wr_pass+=makeBulkString(oss.str());
+                        }
+                        wr_flags=makeArray(wr_flags, (int)users[user].flags.size());
+                        wr_pass=makeArray(wr_pass, (int)users[user].passwords.size());
+                        wr=makeArray(makeBulkString("flags")+wr_flags+makeBulkString("passwords")+wr_pass, 4);
+                    }
+                    else if (arg.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(arg.value)) == "SETUSER")
+                    {
+                        std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value);
+                        std::string pass = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 3].value);
+                        if (users.find(user)!=users.end())
+                        {
+                            wr=makeSimpleString("OK");
+                            if (pass[0]!='>')
+                                wr="-ERR invalid format! Password needs \">\" rule!";
+                            unsigned char hash[SHA256_DIGEST_LENGTH];
+                            pass=pass.substr (1, (int)pass.size()-1);
+                            SHA256(reinterpret_cast<const unsigned char*>(pass.data()), pass.size(), hash);
+                            std::string hash_str(reinterpret_cast<const char*>(hash), SHA256_DIGEST_LENGTH);
+                            std::cout << hash << "\n";
+                            users[user].passwords.insert(hash_str);
+                            users[user].flags.erase("nopass");
+
+                        }
+                        else
+                            wr="$-1\r\n";
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GEOSEARCH")
@@ -1364,6 +1402,8 @@ std::string readBytes (int fd, int nr)
 }
 int main(int argc, char** argv)
 {
+    users["default"].username="default";
+    users["default"].flags.insert("nopass");
     int port=6379;
     // Flush after every std::cout / std::cerr
     std::cout << std::unitbuf;
