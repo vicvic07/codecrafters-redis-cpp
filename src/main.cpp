@@ -497,7 +497,10 @@ void handleClient(int client_fd, int client_id, int mode)
                         std::string pass_hash(reinterpret_cast<const char*>(hash), SHA256_DIGEST_LENGTH);
                         std::cout << pass_hash << "\n";
                         if (users[user].passwords.find(pass_hash)!=users[user].passwords.end())
+                        {
                             wr=makeSimpleString("OK");
+                            current_user=user;
+                        }
                         else
                             wr=login_err;
                     }
