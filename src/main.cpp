@@ -483,6 +483,25 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "AUTH")
+                {
+                    std::string user = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 1].value);
+                    std::string pass = std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value);
+                    std::string login_err="-WRONGPASS invalid username-password pair or user is disabled.\r\n";
+                    if (users.find(user)!=users.end())
+                    {
+                        unsigned char hash[SHA256_DIGEST_LENGTH];
+                        SHA256(reinterpret_cast<const unsigned char*>(pass.c_str()), pass.length(), hash);
+                        std::string pass_hash(reinterpret_cast<const char*>(hash), SHA256_DIGEST_LENGTH);
+                        std::cout << pass_hash << "\n";
+                        if (users[user].passwords.find(pass_hash)!=users[user].passwords.end())
+                            wr=makeSimpleString("OK");
+                        else
+                            wr=login_err;
+                    }
+                    else
+                        wr=login_err;
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "ACL")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
@@ -519,7 +538,6 @@ void handleClient(int client_fd, int client_id, int mode)
                             pass=pass.substr (1, (int)pass.size()-1);
                             SHA256(reinterpret_cast<const unsigned char*>(pass.data()), pass.size(), hash);
                             std::string hash_str(reinterpret_cast<const char*>(hash), SHA256_DIGEST_LENGTH);
-                            std::cout << hash << "\n";
                             users[user].passwords.insert(hash_str);
                             users[user].flags.erase("nopass");
 
