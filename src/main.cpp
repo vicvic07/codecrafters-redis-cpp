@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <variant>
 #include <sys/stat.h>
+#include <bitset>
 #include <sys/types.h>
 #include <vector>
 #include <set>
@@ -47,7 +48,7 @@ enum class RESPType
 struct RESPToken
 {
     RESPType type;
-    std::any value;
+    std::any value=std::string("", 0);
     std::string RESP_string;
 
     RESPToken(RESPType type, std::any value, std::string RESP_string)
@@ -322,7 +323,6 @@ std::map <RESPToken, std::set<int>> channel;
 typedef tree<std::pair<long double, RESPToken>, null_type, std::less<std::pair<long double, RESPToken>>, rb_tree_tag, tree_order_statistics_node_update> ordered_set;
 std::map <RESPToken, ordered_set> sorted_sets;
 std::map <RESPToken, std::map<RESPToken, long double>> sorted_sets_only_members;
-std::map<RESPToken, std::string> bitmaps;
 long double longitude_limit=180, latitude_limit=85.05112878;
 long double degreeToRadian (long double angle)
 {
@@ -490,27 +490,32 @@ void handleClient(int client_fd, int client_id, int mode)
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     int pos = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
-                    int index = pos/16;
-                    int bit = pos%16;
-                    if (index>=bitmaps[arg].size())
+                    int index = pos/8;
+                    int bit = 7-pos%8;
+                    std::string value=std::any_cast<std::string>(variables[arg].value);
+                    if (index>=value.size())
                         wr=makeInteger ("0");
                     else
-                        wr=makeInteger(std::to_string(!!(bitmaps[arg][index] >> bit & 1)));
+                        wr=makeInteger(std::to_string(!!(value[index] >> bit & 1)));
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "SETBIT")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     int pos = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 2].value).c_str());
                     int bit_value = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i + 3].value).c_str());
-                    int index = pos/16;
-                    int bit = pos%16;
-                    if (index>=bitmaps[arg].size())
-                        bitmaps[arg].resize(index+1);
-                    wr=makeInteger (std::to_string(!!(bitmaps[arg][index] & (1 << bit))));
+                    int index = pos/8;
+                    int bit = 7-pos%8;
+                    if (variables.find(arg)==variables.end())
+                        variables[arg].value=std::string("", 0);
+                    std::string value=std::any_cast<std::string>(variables[arg].value);
+                    if (index>=value.size())
+                        value.resize(index+1), variables[arg].type==RESPType::BULK_STRING, variables[arg].RESP_string=makeBulkString(value);
+                    wr=makeInteger (std::to_string(!!(value[index] & (1 << bit))));
                     if (bit_value)
-                        bitmaps[arg][index] |= (1 << bit);
+                        value[index] |= (1 << bit), variables[arg].RESP_string=makeBulkString(value);
                     else
-                        bitmaps[arg][index] &= ~(1 << bit);
+                        value[index] &= ~(1 << bit), variables[arg].RESP_string=makeBulkString(value);
+                    variables[arg].value=value;
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "AUTH")
                 {
