@@ -486,6 +486,41 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BITCOUNT")
+                {
+                    RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (variables.find(arg)!=variables.end())
+                    {
+                        std::string value = std::any_cast<std::string>(variables[arg].value);
+                        int start=0, end=value.size()-1;
+                        if (i+2<std::any_cast<std::vector<RESPToken>>(token.value).size())
+                        {
+                            int diff = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+2].value).c_str());
+                            if (diff<0)
+                                start=value.size()-diff;
+                            else
+                                start=diff;
+                        }
+                        if (i+3<std::any_cast<std::vector<RESPToken>>(token.value).size())
+                        {
+                            int diff = atoi(std::any_cast<std::string>(std::any_cast<std::vector<RESPToken>>(token.value)[i+3].value).c_str());
+                            if (diff<0)
+                                end=value.size()-diff;
+                            else
+                                end=diff;
+                        }
+                        long long cnt=0;
+                        for (int i=std::max (0, start);i<=std::min ((int)value.size()-1, end);i++)
+                        {
+                            for (int bit=0;bit<=7;bit++)
+                                cnt+=!!((1 << bit) & value[i]);
+                            std::cout << std::setfill('0') << std::setw(8) << std::bitset<8>(value[i]) << "\n";
+                        }
+                        wr=makeInteger(std::to_string(cnt));
+                    }
+                    else
+                        wr=makeInteger("0");
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "STRLEN")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
