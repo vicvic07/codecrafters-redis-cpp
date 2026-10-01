@@ -486,6 +486,40 @@ void handleClient(int client_fd, int client_id, int mode)
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
                     wr = makeBulkString(std::any_cast<std::string>(arg.value));
                 }
+                else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BITOP")
+                {
+                    RESPToken op = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
+                    if (op.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(op.value)) == "AND")
+                    {
+                        RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
+                        long long max_length = 0;
+                        for (int j=i+3;j<std::any_cast<std::vector<RESPToken>>(token.value).size();j++)
+                        {
+                            RESPToken value_resp = std::any_cast<std::vector<RESPToken>>(token.value)[j];
+                            if (variables.find(value_resp)==variables.end())
+                                 max_length = std::max(max_length, 0ll);
+                            else
+                                max_length = std::max(max_length, (long long)std::any_cast<std::string>(variables[value_resp].value).size());
+                        }
+                        std::string op_result=std::string("", max_length);
+                        for (int j=0;j<max_length;j++)
+                            op_result[j]=0b11111111;
+                        for (int j=i+3;j<std::any_cast<std::vector<RESPToken>>(token.value).size();j++)
+                        {
+                            RESPToken value_resp = std::any_cast<std::vector<RESPToken>>(token.value)[j];
+                            std::string value="";
+                            if (variables.find(value_resp)!=variables.end())
+                            {
+                                value=std::any_cast<std::string>(variables[value_resp].value);
+                            }
+                            value.resize(max_length);
+                            for (int q=0;q<max_length;q++)
+                                op_result[q] &=value[q];
+                        }
+                        wr=makeInteger(std::to_string(max_length));
+                        variables[arg]={RESPType::BULK_STRING, op_result, makeBulkString(op_result)};
+                    }
+                }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BITCOUNT")
                 {
                     RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
@@ -529,7 +563,7 @@ void handleClient(int client_fd, int client_id, int mode)
                     else
                     {
                         std::string value = std::any_cast<std::string>(variables[arg].value);
-                        wr=makeInteger(std::to_string(value.size()));
+                        wr=makeInteger(std::to_string((long long)value.size()));
                     }
                 }
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "GETBIT")
