@@ -489,8 +489,9 @@ void handleClient(int client_fd, int client_id, int mode)
                 else if (element.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(element.value)) == "BITOP")
                 {
                     RESPToken op = std::any_cast<std::vector<RESPToken>>(token.value)[i + 1];
-                    if (op.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(op.value)) == "AND")
+                    if (op.type == RESPType::BULK_STRING && allUpper(std::any_cast<std::string>(op.value)) == "AND" || allUpper(std::any_cast<std::string>(op.value)) == "OR")
                     {
+                        bool or_case=allUpper(std::any_cast<std::string>(op.value))=="OR";
                         RESPToken arg = std::any_cast<std::vector<RESPToken>>(token.value)[i + 2];
                         long long max_length = 0;
                         for (int j=i+3;j<std::any_cast<std::vector<RESPToken>>(token.value).size();j++)
@@ -503,7 +504,12 @@ void handleClient(int client_fd, int client_id, int mode)
                         }
                         std::string op_result=std::string("", max_length);
                         for (int j=0;j<max_length;j++)
-                            op_result[j]=0b11111111;
+                        {
+                            if (or_case)
+                                op_result[j]=0;
+                            else
+                                op_result[j]=0b11111111;
+                        }
                         for (int j=i+3;j<std::any_cast<std::vector<RESPToken>>(token.value).size();j++)
                         {
                             RESPToken value_resp = std::any_cast<std::vector<RESPToken>>(token.value)[j];
@@ -514,7 +520,12 @@ void handleClient(int client_fd, int client_id, int mode)
                             }
                             value.resize(max_length);
                             for (int q=0;q<max_length;q++)
-                                op_result[q] &=value[q];
+                            {
+                                if (or_case)
+                                    op_result[q] |=value[q];
+                                else
+                                    op_result[q] &=value[q];
+                            }
                         }
                         wr=makeInteger(std::to_string(max_length));
                         variables[arg]={RESPType::BULK_STRING, op_result, makeBulkString(op_result)};
